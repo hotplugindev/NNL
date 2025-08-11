@@ -24,6 +24,12 @@ const BLOCK_SIZE: usize = 64;
 const SIMD_WIDTH: usize = 8;
 /// Memory alignment for SIMD operations
 const MEMORY_ALIGNMENT: usize = 32;
+/// Threshold for using SIMD operations (elements)
+const SIMD_THRESHOLD: usize = 64;
+/// Threshold for using parallel operations (elements)
+const PARALLEL_THRESHOLD: usize = 1024;
+/// Threshold for using blocked matrix multiplication
+const BLOCKED_MATMUL_THRESHOLD: usize = 128;
 
 /// High-performance CPU backend implementation
 pub struct CpuBackend {
@@ -100,7 +106,8 @@ impl Backend for CpuBackend {
     }
 
     fn allocate(&self, size: usize) -> Result<Arc<dyn DeviceMemory>> {
-        CpuMemory::new_aligned(size).map(|m| Arc::new(m) as Arc<dyn DeviceMemory>)
+        let size_bytes = size * std::mem::size_of::<f32>();
+        CpuMemory::new_aligned(size_bytes).map(|m| Arc::new(m) as Arc<dyn DeviceMemory>)
     }
 
     fn copy_to_device(&self, data: &[f32], memory: &dyn DeviceMemory) -> Result<()> {
@@ -468,12 +475,31 @@ impl CpuOperation {
         let b = b_memory.as_slice();
         let c = c_memory.as_mut_slice();
 
-        // Use blocked matrix multiplication for better cache performance
-        unsafe {
-            if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned {
-                matrix_multiply_avx2_blocked(a, b, c, m, n, k);
-            } else {
-                matrix_multiply_blocked_parallel(a, b, c, m, n, k);
+        // Choose algorithm based on matrix size
+        let total_elements = m * n * k;
+
+        if total_elements < BLOCKED_MATMUL_THRESHOLD * BLOCKED_MATMUL_THRESHOLD {
+            // Small matrices: use simple scalar operations for better cache performance
+            matrix_multiply_simple_scalar(a, b, c, m, n, k);
+        } else if total_elements < PARALLEL_THRESHOLD * PARALLEL_THRESHOLD {
+            // Medium matrices: use SIMD but no threading overhead
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    matrix_multiply_avx2_simple(a, b, c, m, n, k);
+                } else {
+                    matrix_multiply_simple_scalar(a, b, c, m, n, k);
+                }
+            }
+        } else {
+            // Large matrices: use full optimization with blocking and parallelization
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    matrix_multiply_avx2_blocked(a, b, c, m, n, k);
+                } else {
+                    matrix_multiply_blocked_parallel(a, b, c, m, n, k);
+                }
             }
         }
 
@@ -513,11 +539,29 @@ impl CpuOperation {
             return Err(NnlError::device("Input and output sizes must match"));
         }
 
-        unsafe {
-            if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned {
-                elementwise_add_avx2(a, b, c);
-            } else {
-                elementwise_add_parallel(a, b, c);
+        // Choose algorithm based on array size
+        if a.len() < SIMD_THRESHOLD {
+            // Small arrays: use simple scalar operations
+            elementwise_add_scalar(a, b, c);
+        } else if a.len() < PARALLEL_THRESHOLD {
+            // Medium arrays: use SIMD without parallelization overhead
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_add_avx2(a, b, c);
+                } else {
+                    elementwise_add_scalar(a, b, c);
+                }
+            }
+        } else {
+            // Large arrays: use parallel processing
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_add_avx2(a, b, c);
+                } else {
+                    elementwise_add_parallel(a, b, c);
+                }
             }
         }
 
@@ -557,11 +601,29 @@ impl CpuOperation {
             return Err(NnlError::device("Input and output sizes must match"));
         }
 
-        unsafe {
-            if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned {
-                elementwise_multiply_avx2(a, b, c);
-            } else {
-                elementwise_multiply_parallel(a, b, c);
+        // Choose algorithm based on array size
+        if a.len() < SIMD_THRESHOLD {
+            // Small arrays: use simple scalar operations
+            elementwise_multiply_scalar(a, b, c);
+        } else if a.len() < PARALLEL_THRESHOLD {
+            // Medium arrays: use SIMD without parallelization overhead
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_multiply_avx2(a, b, c);
+                } else {
+                    elementwise_multiply_scalar(a, b, c);
+                }
+            }
+        } else {
+            // Large arrays: use parallel processing
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_multiply_avx2(a, b, c);
+                } else {
+                    elementwise_multiply_parallel(a, b, c);
+                }
             }
         }
 
@@ -601,11 +663,29 @@ impl CpuOperation {
             return Err(NnlError::device("Input and output sizes must match"));
         }
 
-        unsafe {
-            if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned {
-                elementwise_subtract_avx2(a, b, c);
-            } else {
-                elementwise_subtract_parallel(a, b, c);
+        // Choose algorithm based on array size
+        if a.len() < SIMD_THRESHOLD {
+            // Small arrays: use simple scalar operations
+            elementwise_subtract_scalar(a, b, c);
+        } else if a.len() < PARALLEL_THRESHOLD {
+            // Medium arrays: use SIMD without parallelization overhead
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_subtract_avx2(a, b, c);
+                } else {
+                    elementwise_subtract_scalar(a, b, c);
+                }
+            }
+        } else {
+            // Large arrays: use parallel processing
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_subtract_avx2(a, b, c);
+                } else {
+                    elementwise_subtract_parallel(a, b, c);
+                }
             }
         }
 
@@ -645,11 +725,29 @@ impl CpuOperation {
             return Err(NnlError::device("Input and output sizes must match"));
         }
 
-        unsafe {
-            if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned {
-                elementwise_divide_avx2(a, b, c);
-            } else {
-                elementwise_divide_parallel(a, b, c);
+        // Choose algorithm based on array size
+        if a.len() < SIMD_THRESHOLD {
+            // Small arrays: use simple scalar operations
+            elementwise_divide_scalar(a, b, c);
+        } else if a.len() < PARALLEL_THRESHOLD {
+            // Medium arrays: use SIMD without parallelization overhead
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_divide_avx2(a, b, c);
+                } else {
+                    elementwise_divide_scalar(a, b, c);
+                }
+            }
+        } else {
+            // Large arrays: use parallel processing
+            unsafe {
+                if cpu_features.has_avx2 && a_memory.aligned && b_memory.aligned && c_memory.aligned
+                {
+                    elementwise_divide_avx2(a, b, c);
+                } else {
+                    elementwise_divide_parallel(a, b, c);
+                }
             }
         }
 
@@ -693,36 +791,66 @@ impl CpuOperation {
             return Err(NnlError::device("Input and output sizes must match"));
         }
 
-        unsafe {
+        // Choose algorithm based on array size
+        if input.len() < SIMD_THRESHOLD {
+            // Small arrays: use simple scalar operations
             match activation {
-                ActivationType::ReLU => {
-                    if cpu_features.has_avx2 && input_memory.aligned && output_memory.aligned {
-                        relu_avx2(input, output);
-                    } else {
-                        relu_parallel(input, output);
+                ActivationType::ReLU => relu_scalar(input, output),
+                ActivationType::Sigmoid => sigmoid_scalar(input, output),
+                ActivationType::Tanh => tanh_scalar(input, output),
+                ActivationType::Softmax => softmax_scalar(input, output),
+                ActivationType::LeakyReLU(alpha) => leaky_relu_scalar(input, output, *alpha),
+                ActivationType::ELU(alpha) => elu_scalar(input, output, *alpha),
+                ActivationType::GELU => gelu_scalar(input, output),
+            }
+        } else if input.len() < PARALLEL_THRESHOLD {
+            // Medium arrays: use SIMD without parallelization overhead
+            unsafe {
+                match activation {
+                    ActivationType::ReLU => {
+                        if cpu_features.has_avx2 && input_memory.aligned && output_memory.aligned {
+                            relu_avx2(input, output);
+                        } else {
+                            relu_scalar(input, output);
+                        }
                     }
-                }
-                ActivationType::Sigmoid => {
-                    if cpu_features.has_avx2 && input_memory.aligned && output_memory.aligned {
-                        sigmoid_avx2(input, output);
-                    } else {
-                        sigmoid_parallel(input, output);
+                    ActivationType::Sigmoid => {
+                        if cpu_features.has_avx2 && input_memory.aligned && output_memory.aligned {
+                            sigmoid_avx2(input, output);
+                        } else {
+                            sigmoid_scalar(input, output);
+                        }
                     }
+                    ActivationType::Tanh => tanh_scalar(input, output),
+                    ActivationType::Softmax => softmax_scalar(input, output),
+                    ActivationType::LeakyReLU(alpha) => leaky_relu_scalar(input, output, *alpha),
+                    ActivationType::ELU(alpha) => elu_scalar(input, output, *alpha),
+                    ActivationType::GELU => gelu_scalar(input, output),
                 }
-                ActivationType::Tanh => {
-                    tanh_parallel(input, output);
-                }
-                ActivationType::Softmax => {
-                    softmax_parallel(input, output);
-                }
-                ActivationType::LeakyReLU(alpha) => {
-                    leaky_relu_parallel(input, output, *alpha);
-                }
-                ActivationType::ELU(alpha) => {
-                    elu_parallel(input, output, *alpha);
-                }
-                ActivationType::GELU => {
-                    gelu_parallel(input, output);
+            }
+        } else {
+            // Large arrays: use parallel processing
+            unsafe {
+                match activation {
+                    ActivationType::ReLU => {
+                        if cpu_features.has_avx2 && input_memory.aligned && output_memory.aligned {
+                            relu_avx2(input, output);
+                        } else {
+                            relu_parallel(input, output);
+                        }
+                    }
+                    ActivationType::Sigmoid => {
+                        if cpu_features.has_avx2 && input_memory.aligned && output_memory.aligned {
+                            sigmoid_avx2(input, output);
+                        } else {
+                            sigmoid_parallel(input, output);
+                        }
+                    }
+                    ActivationType::Tanh => tanh_parallel(input, output),
+                    ActivationType::Softmax => softmax_parallel(input, output),
+                    ActivationType::LeakyReLU(alpha) => leaky_relu_parallel(input, output, *alpha),
+                    ActivationType::ELU(alpha) => elu_parallel(input, output, *alpha),
+                    ActivationType::GELU => gelu_parallel(input, output),
                 }
             }
         }
@@ -882,6 +1010,71 @@ unsafe fn matrix_multiply_avx2_blocked(
     }
 }
 
+// Simple scalar matrix multiplication for small matrices
+fn matrix_multiply_simple_scalar(
+    a: &[f32],
+    b: &[f32],
+    c: &mut [f32],
+    m: usize,
+    n: usize,
+    k: usize,
+) {
+    // Zero the output matrix
+    c.fill(0.0);
+
+    // Simple triple-loop matrix multiplication optimized for small matrices
+    for i in 0..m {
+        for j in 0..n {
+            let mut sum = 0.0;
+            for l in 0..k {
+                sum += a[i * k + l] * b[l * n + j];
+            }
+            c[i * n + j] = sum;
+        }
+    }
+}
+
+// AVX2 matrix multiplication without blocking (for medium matrices)
+#[target_feature(enable = "avx2,fma")]
+unsafe fn matrix_multiply_avx2_simple(
+    a: &[f32],
+    b: &[f32],
+    c: &mut [f32],
+    m: usize,
+    n: usize,
+    k: usize,
+) {
+    // Zero the output matrix
+    c.fill(0.0);
+
+    // SIMD matrix multiplication without blocking overhead
+    for i in 0..m {
+        for j in (0..n).step_by(SIMD_WIDTH) {
+            let j_end = (j + SIMD_WIDTH).min(n);
+            if j_end - j == SIMD_WIDTH {
+                unsafe {
+                    let mut sum_vec = _mm256_setzero_ps();
+                    for l in 0..k {
+                        let a_val = _mm256_broadcast_ss(&a[i * k + l]);
+                        let b_vec = _mm256_loadu_ps(b.as_ptr().add(l * n + j));
+                        sum_vec = _mm256_fmadd_ps(a_val, b_vec, sum_vec);
+                    }
+                    _mm256_storeu_ps(c.as_mut_ptr().add(i * n + j), sum_vec);
+                }
+            } else {
+                // Handle remaining elements with scalar code
+                for jj in j..j_end {
+                    let mut sum = 0.0;
+                    for l in 0..k {
+                        sum += a[i * k + l] * b[l * n + jj];
+                    }
+                    c[i * n + jj] = sum;
+                }
+            }
+        }
+    }
+}
+
 // Parallel blocked matrix multiplication fallback
 fn matrix_multiply_blocked_parallel(
     a: &[f32],
@@ -984,6 +1177,97 @@ unsafe fn elementwise_divide_avx2(a: &[f32], b: &[f32], c: &mut [f32]) {
     // Handle remaining elements
     for i in simd_len..len {
         c[i] = a[i] / b[i];
+    }
+}
+
+// Simple scalar elementwise operations for small arrays
+fn elementwise_add_scalar(a: &[f32], b: &[f32], c: &mut [f32]) {
+    for i in 0..a.len() {
+        c[i] = a[i] + b[i];
+    }
+}
+
+fn elementwise_multiply_scalar(a: &[f32], b: &[f32], c: &mut [f32]) {
+    for i in 0..a.len() {
+        c[i] = a[i] * b[i];
+    }
+}
+
+fn elementwise_subtract_scalar(a: &[f32], b: &[f32], c: &mut [f32]) {
+    for i in 0..a.len() {
+        c[i] = a[i] - b[i];
+    }
+}
+
+fn elementwise_divide_scalar(a: &[f32], b: &[f32], c: &mut [f32]) {
+    for i in 0..a.len() {
+        c[i] = a[i] / b[i];
+    }
+}
+
+// Simple scalar activation functions for small arrays
+fn relu_scalar(input: &[f32], output: &mut [f32]) {
+    for i in 0..input.len() {
+        output[i] = input[i].max(0.0);
+    }
+}
+
+fn sigmoid_scalar(input: &[f32], output: &mut [f32]) {
+    for i in 0..input.len() {
+        output[i] = 1.0 / (1.0 + (-input[i]).exp());
+    }
+}
+
+fn tanh_scalar(input: &[f32], output: &mut [f32]) {
+    for i in 0..input.len() {
+        output[i] = input[i].tanh();
+    }
+}
+
+fn softmax_scalar(input: &[f32], output: &mut [f32]) {
+    // Find max for numerical stability
+    let max_val = input.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    // Compute exp(x - max) and sum
+    let mut exp_sum = 0.0;
+    for (i, &x) in input.iter().enumerate() {
+        output[i] = (x - max_val).exp();
+        exp_sum += output[i];
+    }
+
+    // Normalize
+    for out in output.iter_mut() {
+        *out /= exp_sum;
+    }
+}
+
+fn leaky_relu_scalar(input: &[f32], output: &mut [f32], alpha: f32) {
+    for i in 0..input.len() {
+        output[i] = if input[i] > 0.0 {
+            input[i]
+        } else {
+            alpha * input[i]
+        };
+    }
+}
+
+fn elu_scalar(input: &[f32], output: &mut [f32], alpha: f32) {
+    for i in 0..input.len() {
+        output[i] = if input[i] > 0.0 {
+            input[i]
+        } else {
+            alpha * (input[i].exp() - 1.0)
+        };
+    }
+}
+
+fn gelu_scalar(input: &[f32], output: &mut [f32]) {
+    const SQRT_2_PI: f32 = 0.7978845608; // sqrt(2/π)
+
+    for i in 0..input.len() {
+        let x = input[i];
+        let tanh_arg = SQRT_2_PI * (x + 0.044715 * x * x * x);
+        output[i] = 0.5 * x * (1.0 + tanh_arg.tanh());
     }
 }
 
