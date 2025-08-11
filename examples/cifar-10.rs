@@ -585,7 +585,7 @@ fn main() -> Result<()> {
     println!("==========================================");
 
     // Setup device
-    let device = Device::vulkan()?;
+    let device = Device::cpu()?;
     println!("Using device: {:?}", device.device_type());
 
     // Load CIFAR-10 dataset
