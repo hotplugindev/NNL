@@ -1,0 +1,33 @@
+#version 450
+
+// Elementwise division compute shader
+// Computes: result[i] = a[i] / b[i]
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer InputBufferA {
+    float a[];
+};
+
+layout(set = 0, binding = 1) buffer InputBufferB {
+    float b[];
+};
+
+layout(set = 0, binding = 2) buffer OutputBuffer {
+    float result[];
+};
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    // Bounds checking
+    if (index >= a.length() || index >= b.length() || index >= result.length()) {
+        return;
+    }
+
+    // Perform elementwise division entirely on GPU
+    // Handle division by zero by setting result to infinity
+    float divisor = b[index];
+    result[index] = (divisor != 0.0) ? (a[index] / divisor) :
+                    (a[index] >= 0.0 ? 1.0/0.0 : -1.0/0.0);
+}

@@ -1,0 +1,27 @@
+#version 450
+
+// ReLU activation compute shader
+// Computes: result[i] = max(0.0, input[i])
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer {
+    float input_data[];
+};
+
+layout(set = 0, binding = 1) buffer OutputBuffer {
+    float result[];
+};
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    // Bounds checking
+    if (index >= input_data.length() || index >= result.length()) {
+        return;
+    }
+
+    // Perform ReLU activation entirely on GPU
+    // ReLU(x) = max(0, x)
+    result[index] = max(0.0, input_data[index]);
+}
