@@ -8,8 +8,11 @@ use std::cell::RefCell;
 use std::fmt;
 use std::sync::Arc;
 
+pub mod async_executor;
 pub mod cpu;
 pub mod gpu;
+pub mod kernel_fusion;
+pub mod memory_pool;
 
 /// Available device types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

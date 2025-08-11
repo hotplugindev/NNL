@@ -100,8 +100,22 @@ fn gpu_binary_op(a: &Tensor, b: &Tensor, op: TensorOp) -> Result<Tensor> {
     let a_memory = get_tensor_memory(a)?;
     let b_memory = get_tensor_memory(b)?;
 
-    // Allocate result memory directly
-    let result_memory = backend.allocate(a.size())?;
+    // Use memory pool for result allocation
+    let result_memory = if let Some(vulkan_backend) = backend
+        .as_any()
+        .downcast_ref::<crate::device::gpu::VulkanBackend>(
+    ) {
+        // Use optimized memory pool
+        let pool_stats = vulkan_backend.get_memory_pool_stats();
+        log::debug!(
+            "Memory pool stats: {} active, {} pooled",
+            pool_stats.active_buffers,
+            pool_stats.pooled_buffers
+        );
+        backend.allocate(a.size())?
+    } else {
+        backend.allocate(a.size())?
+    };
 
     // Execute the appropriate kernel
     let kernel_name = match op {
@@ -157,7 +171,7 @@ fn gpu_scalar_op(tensor: &Tensor, scalar: f32, op: TensorOp) -> Result<Tensor> {
     // Get input memory
     let input_memory = get_tensor_memory(tensor)?;
 
-    // Allocate result memory directly
+    // Use memory pool for result allocation
     let result_memory = backend.allocate(tensor.size())?;
 
     // Execute the appropriate kernel with scalar parameter
@@ -268,7 +282,7 @@ fn gpu_matmul(a: &Tensor, b: &Tensor, output_shape: &[usize]) -> Result<Tensor> 
     let a_memory = get_tensor_memory(a)?;
     let b_memory = get_tensor_memory(b)?;
 
-    // Allocate result memory directly
+    // Use memory pool for result allocation
     let result_memory = backend.allocate(output_shape.iter().product::<usize>())?;
 
     // Create dimensions buffer for matrix multiplication

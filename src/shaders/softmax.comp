@@ -1,8 +1,8 @@
 #version 450
 
-// Softmax activation compute shader
+// Softmax activation compute shader using shared memory
 // Computes: result[i] = exp(input[i] - max) / sum(exp(input[j] - max))
-// Uses two-pass algorithm for numerical stability
+// Uses traditional shared memory approach for maximum compatibility
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 

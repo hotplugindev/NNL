@@ -22,6 +22,8 @@ mkdir -p "$OUTPUT_DIR"
 
 # List of shaders to compile
 SHADERS=(
+    "fused_add_relu"
+    "fused_matmul_bias_relu"
     "elementwise_add"
     "elementwise_sub"
     "elementwise_mul"

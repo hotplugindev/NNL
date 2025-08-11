@@ -1,8 +1,8 @@
 #version 450
 
-// Optimized vectorized elementwise addition compute shader
-// Computes: result[i] = a[i] + b[i]
-// Uses vec4 operations for 4x throughput improvement
+// Fused element-wise addition + ReLU activation
+// Computes: ReLU(a + b) = max(0, a + b)
+// This fuses two operations into one for better efficiency
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -18,9 +18,13 @@ layout(set = 0, binding = 2) buffer OutputBuffer {
     float result[];
 };
 
+layout(set = 0, binding = 3) uniform UniformBuffer {
+    uint size;
+};
+
 void main() {
     uint index = gl_GlobalInvocationID.x * 4;
-    uint length = a.length();
+    uint length = size;
 
     // Vectorized processing - handle 4 elements at once
     if (index + 3 < length) {
@@ -28,8 +32,8 @@ void main() {
         vec4 a_vec = vec4(a[index], a[index + 1], a[index + 2], a[index + 3]);
         vec4 b_vec = vec4(b[index], b[index + 1], b[index + 2], b[index + 3]);
 
-        // Vectorized addition
-        vec4 result_vec = a_vec + b_vec;
+        // Fused addition + ReLU: max(0, a + b)
+        vec4 result_vec = max(vec4(0.0), a_vec + b_vec);
 
         // Store 4 results at once
         result[index] = result_vec.x;
@@ -41,7 +45,8 @@ void main() {
         for (uint i = 0; i < 4 && index + i < length; i++) {
             uint idx = index + i;
             if (idx < length) {
-                result[idx] = a[idx] + b[idx];
+                float sum = a[idx] + b[idx];
+                result[idx] = max(0.0, sum);
             }
         }
     }
