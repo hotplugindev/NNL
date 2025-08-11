@@ -15,17 +15,7 @@ fn main() -> Result<()> {
     println!("===============================================");
 
     // Try to get a GPU device, fall back to CPU if not available
-    let device = match Device::vulkan().or_else(|_| Device::cpu()) {
-        Ok(device) => {
-            println!("Using device: {:?}", device.device_type());
-            device
-        }
-        Err(e) => {
-            println!("Failed to initialize GPU device: {}", e);
-            println!("Falling back to CPU");
-            Device::cpu()?
-        }
-    };
+    let device = Device::cpu()?;
 
     // Create XOR training data as individual samples
     let train_inputs = vec![
