@@ -13,42 +13,84 @@ use crate::error::{NnlError, Result};
 #[derive(Debug, Clone, PartialEq)]
 pub enum FusableOp {
     /// Element-wise addition: output = a + b
-    Add { a_id: BufferId, b_id: BufferId },
+    Add {
+        /// First input buffer identifier
+        a_id: BufferId,
+        /// Second input buffer identifier
+        b_id: BufferId,
+    },
 
     /// Element-wise multiplication: output = a * b
-    Mul { a_id: BufferId, b_id: BufferId },
+    Mul {
+        /// First input buffer identifier
+        a_id: BufferId,
+        /// Second input buffer identifier
+        b_id: BufferId,
+    },
 
     /// Element-wise subtraction: output = a - b
-    Sub { a_id: BufferId, b_id: BufferId },
+    Sub {
+        /// First input buffer identifier
+        a_id: BufferId,
+        /// Second input buffer identifier
+        b_id: BufferId,
+    },
 
     /// Scalar addition: output = input + scalar
-    AddScalar { input_id: BufferId, scalar: f32 },
+    AddScalar {
+        /// Input buffer identifier
+        input_id: BufferId,
+        /// Scalar value to add
+        scalar: f32,
+    },
 
     /// Scalar multiplication: output = input * scalar
-    MulScalar { input_id: BufferId, scalar: f32 },
+    MulScalar {
+        /// Input buffer identifier
+        input_id: BufferId,
+        /// Scalar value to multiply
+        scalar: f32,
+    },
 
     /// ReLU activation: output = max(0, input)
-    Relu { input_id: BufferId },
+    Relu {
+        /// Input buffer identifier
+        input_id: BufferId,
+    },
 
     /// Sigmoid activation: output = 1 / (1 + exp(-input))
-    Sigmoid { input_id: BufferId },
+    Sigmoid {
+        /// Input buffer identifier
+        input_id: BufferId,
+    },
 
     /// Tanh activation: output = tanh(input)
-    Tanh { input_id: BufferId },
+    Tanh {
+        /// Input buffer identifier
+        input_id: BufferId,
+    },
 
     /// GELU activation: output = input * 0.5 * (1 + tanh(sqrt(2/π) * (input + 0.044715 * input³)))
-    Gelu { input_id: BufferId },
+    Gelu {
+        /// Input buffer identifier
+        input_id: BufferId,
+    },
 
     /// Matrix multiplication: output = a @ b
     MatMul {
+        /// First matrix buffer identifier
         a_id: BufferId,
+        /// Second matrix buffer identifier
         b_id: BufferId,
+        /// Matrix multiplication dimensions
         dims: MatMulDims,
     },
 
     /// Transpose operation: output = transpose(input)
     Transpose {
+        /// Input matrix buffer identifier
         input_id: BufferId,
+        /// Transpose dimensions (rows, cols)
         dims: (usize, usize),
     },
 }
@@ -60,20 +102,30 @@ pub struct BufferId(pub u32);
 /// Matrix multiplication dimensions
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatMulDims {
-    pub m: usize, // Rows of A and C
-    pub k: usize, // Cols of A, rows of B
-    pub n: usize, // Cols of B and C
+    /// Rows of matrix A and result matrix C
+    pub m: usize,
+    /// Columns of matrix A and rows of matrix B
+    pub k: usize,
+    /// Columns of matrix B and result matrix C
+    pub n: usize,
 }
 
 /// Represents a fused kernel with multiple operations
 #[derive(Debug, Clone)]
 pub struct FusedKernel {
+    /// List of operations to be executed in this fused kernel
     pub operations: Vec<FusableOp>,
+    /// Input buffer identifiers required by this kernel
     pub inputs: Vec<BufferId>,
+    /// Output buffer identifiers produced by this kernel
     pub outputs: Vec<BufferId>,
+    /// Intermediate buffer identifiers used during computation
     pub intermediate_buffers: Vec<BufferId>,
+    /// Generated shader source code for this fused kernel
     pub shader_code: String,
+    /// Unique name identifier for this kernel
     pub kernel_name: String,
+    /// Local workgroup size (x, y, z) for GPU execution
     pub local_size: (u32, u32, u32),
 }
 
@@ -93,6 +145,7 @@ pub struct KernelFusionEngine {
     operation_queue: Mutex<VecDeque<FusableOp>>,
 
     /// Generated fused kernels cache
+    #[allow(dead_code)]
     kernel_cache: Mutex<HashMap<String, Arc<FusedKernel>>>,
 
     /// Buffer tracking for dependency analysis
@@ -107,6 +160,7 @@ pub struct KernelFusionEngine {
 
 /// Information about a buffer in the fusion system
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BufferInfo {
     size: usize,
     shape: Vec<usize>,

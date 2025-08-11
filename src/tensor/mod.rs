@@ -6,7 +6,7 @@
 
 use crate::device::{Device, DeviceMemory};
 use crate::error::{NnlError, Result};
-use crate::prelude::DeviceType;
+
 use ndarray::{Array, ArrayD, Dimension};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -651,7 +651,10 @@ mod tests {
     #[test]
     fn test_tensor_device_conversion() {
         let tensor = Tensor::from_slice(&[1.0, 2.0, 3.0, 4.0], &[2, 2]).unwrap();
-        assert_eq!(tensor.device().device_type(), DeviceType::Cpu);
+        assert_eq!(
+            tensor.device().device_type(),
+            crate::device::DeviceType::Cpu
+        );
 
         let host_tensor = tensor.to_host().unwrap();
         assert_eq!(host_tensor.to_vec().unwrap(), tensor.to_vec().unwrap());

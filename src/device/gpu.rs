@@ -678,6 +678,7 @@ impl Backend for VulkanBackend {
 pub struct VulkanBuffer {
     buffer: Subbuffer<[f32]>, // Use f32 directly for better performance
     size_in_bytes: usize,
+    #[allow(dead_code)]
     is_uniform: bool,
 }
 

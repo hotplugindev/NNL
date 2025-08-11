@@ -22,12 +22,19 @@ use crate::error::{NnlError, Result};
 /// Statistics for monitoring pool performance
 #[derive(Debug, Clone)]
 pub struct PoolStats {
+    /// Total number of buffer allocations requested
     pub total_allocations: u64,
+    /// Number of allocations served from the pool
     pub pool_hits: u64,
+    /// Number of allocations that required new buffer creation
     pub pool_misses: u64,
+    /// Number of buffers currently in use
     pub active_buffers: usize,
+    /// Number of buffers available in the pool
     pub pooled_buffers: usize,
+    /// Total memory usage in bytes
     pub memory_usage_bytes: usize,
+    /// Ratio of fragmented memory (0.0 to 1.0)
     pub fragmentation_ratio: f32,
 }
 
@@ -72,24 +79,39 @@ pub struct GpuMemoryPool {
 /// Detailed statistics for a memory pool bucket
 #[derive(Debug, Clone)]
 pub struct BucketStats {
+    /// Number of free buffers available in this bucket
     pub free_buffers: usize,
+    /// Number of allocated buffers from this bucket
     pub allocated_buffers: usize,
+    /// Number of successful allocations from this bucket
     pub hits: u64,
+    /// Number of failed allocations from this bucket
     pub misses: u64,
+    /// Number of buffers created for this bucket
     pub created: u64,
 }
 
 /// Comprehensive statistics for the entire memory pool
+/// Enhanced statistics with additional metrics
 #[derive(Debug, Clone)]
 pub struct DetailedPoolStats {
+    /// Total number of buffer allocations requested
     pub total_allocations: u64,
+    /// Number of allocations served from the pool
     pub pool_hits: u64,
+    /// Number of allocations that required new buffer creation
     pub pool_misses: u64,
+    /// Hit ratio as a percentage (0.0 to 1.0)
     pub hit_ratio: f64,
+    /// Number of buffers currently in use
     pub active_buffers: usize,
+    /// Number of buffers available in the pool
     pub pooled_buffers: usize,
+    /// Total memory usage in megabytes
     pub memory_usage_mb: f64,
+    /// Ratio of fragmented memory (0.0 to 1.0)
     pub fragmentation_ratio: f32,
+    /// Per-bucket statistics mapped by buffer size
     pub bucket_stats: HashMap<usize, BucketStats>,
 }
 
@@ -751,6 +773,7 @@ pub struct ScopedBuffer {
 }
 
 impl ScopedBuffer {
+    /// Create a new pooled buffer wrapper
     pub fn new(buffer: Arc<VulkanBuffer>, pool: Arc<GpuMemoryPool>) -> Self {
         Self {
             buffer: Some(buffer),
@@ -758,10 +781,12 @@ impl ScopedBuffer {
         }
     }
 
+    /// Get a reference to the underlying buffer
     pub fn buffer(&self) -> &Arc<VulkanBuffer> {
         self.buffer.as_ref().expect("Buffer already taken")
     }
 
+    /// Take ownership of the underlying buffer, consuming this wrapper
     pub fn take(mut self) -> Arc<VulkanBuffer> {
         self.buffer.take().expect("Buffer already taken")
     }

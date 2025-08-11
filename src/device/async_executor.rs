@@ -25,14 +25,23 @@ use crate::error::{NnlError, Result};
 
 /// Represents a GPU operation that can be executed asynchronously
 pub struct AsyncOperation {
+    /// Unique identifier for this operation
     pub id: OperationId,
+    /// The kernel to execute for this operation
     pub kernel: Arc<VulkanKernel>,
+    /// Input buffers required by this operation
     pub inputs: Vec<Arc<VulkanBuffer>>,
+    /// Output buffers produced by this operation
     pub outputs: Vec<Arc<VulkanBuffer>>,
+    /// Optional uniform data to pass to the kernel
     pub uniform_data: Option<Vec<u32>>,
+    /// Execution priority of this operation
     pub priority: Priority,
+    /// Operations that must complete before this one can execute
     pub dependencies: Vec<OperationId>,
+    /// Optional callback identifier for completion notification
     pub callback: Option<String>, // Simplified to avoid Send/Sync issues
+    /// Timestamp when this operation was submitted
     pub submitted_at: Instant,
 }
 
@@ -53,16 +62,22 @@ impl std::fmt::Debug for AsyncOperation {
 pub struct OperationId(pub u64);
 
 /// Priority levels for operation scheduling
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
+    /// Low priority operations (background tasks)
     Low = 0,
+    /// Normal priority operations (default)
     Normal = 1,
+    /// High priority operations (interactive tasks)
     High = 2,
+    /// Critical priority operations (urgent system tasks)
     Critical = 3,
 }
 
 /// Represents a GPU execution stream
 pub struct ExecutionStream {
+    #[allow(dead_code)]
     id: StreamId,
     queue: Arc<Queue>,
     command_allocator: Arc<vulkano::command_buffer::allocator::StandardCommandBufferAllocator>,
@@ -76,14 +91,20 @@ pub struct ExecutionStream {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StreamId(pub u32);
 
-/// Statistics for monitoring stream performance
+/// Performance metrics for execution streams
 #[derive(Debug, Clone, Default)]
 pub struct StreamStats {
+    /// Total number of operations executed on this stream
     pub operations_executed: u64,
+    /// Total execution time in milliseconds
     pub total_execution_time_ms: f64,
+    /// Average execution time per operation in milliseconds
     pub average_execution_time_ms: f64,
+    /// Current number of operations in the queue
     pub queue_length: usize,
+    /// Stream utilization ratio (0.0 to 1.0)
     pub utilization_ratio: f32,
+    /// Number of memory transfers that were overlapped with computation
     pub memory_transfers_overlapped: u64,
 }
 
@@ -155,6 +176,7 @@ pub struct AsyncExecutor {
     transfer_streams: RwLock<Vec<Mutex<ExecutionStream>>>,
 
     /// Device handle
+    #[allow(dead_code)]
     device: Arc<VkDevice>,
 
     /// Configuration
@@ -179,15 +201,22 @@ pub struct AsyncExecutor {
     stats: Mutex<ExecutorStats>,
 }
 
-/// Overall executor statistics
+/// Global performance statistics for the async executor
 #[derive(Debug, Clone, Default)]
 pub struct ExecutorStats {
+    /// Total number of operations submitted
     pub total_operations: u64,
+    /// Number of operations that completed successfully
     pub completed_operations: u64,
+    /// Number of operations that failed
     pub failed_operations: u64,
+    /// Average operation latency in milliseconds
     pub average_latency_ms: f64,
+    /// Operations throughput per second
     pub throughput_ops_per_sec: f64,
+    /// GPU utilization percentage (0.0 to 1.0)
     pub gpu_utilization: f32,
+    /// Memory bandwidth utilization percentage (0.0 to 1.0)
     pub memory_bandwidth_utilization: f32,
 }
 
