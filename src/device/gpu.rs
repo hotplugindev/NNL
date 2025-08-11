@@ -421,16 +421,14 @@ impl VulkanBackend {
             .build()
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
-        // Submit and wait for completion
-        let future = sync::now(self.inner.device.clone())
+        // Submit asynchronously - only wait when absolutely necessary
+        let _ = sync::now(self.inner.device.clone())
             .then_execute(self.inner.queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
-        future
-            .wait(None)
-            .map_err(|e| NnlError::gpu(format!("Failed to wait for GPU: {}", e)))?;
+        // No wait - let GPU work asynchronously
 
         Ok(())
     }
@@ -677,16 +675,14 @@ impl VulkanBuffer {
             .build()
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
-        let future = sync::now(queue.device().clone())
+        // Submit asynchronously - don't wait for completion
+        let _ = sync::now(queue.device().clone())
             .then_execute(queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
-        future
-            .wait(None)
-            .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
-
+        // No wait - let GPU work asynchronously
         Ok(())
     }
 
@@ -735,16 +731,14 @@ impl VulkanBuffer {
             .build()
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
-        let future = sync::now(queue.device().clone())
+        // Submit asynchronously - don't wait for completion
+        let _ = sync::now(queue.device().clone())
             .then_execute(queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
-        future
-            .wait(None)
-            .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
-
+        // No wait - let GPU work asynchronously
         Ok(())
     }
 
@@ -798,14 +792,15 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue, command_buffer)
+            .then_execute(queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
+        // Only wait for read operations since we need the data
         future
             .wait(None)
-            .map_err(|e| NnlError::gpu(format!("Failed to wait for GPU: {}", e)))?;
+            .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
 
         // Read from staging buffer and convert u32 back to f32
         let staging_read = staging_buffer
@@ -871,6 +866,7 @@ impl VulkanBuffer {
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
+        // Only wait for read operations since we need the data
         future
             .wait(None)
             .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
