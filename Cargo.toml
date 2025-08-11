@@ -114,6 +114,23 @@ default = ["cpu-optimized"]
 cpu-optimized = ["openblas-src"]
 intel-mkl = ["intel-mkl-src"]
 
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+
+[profile.release.package."*"]
+opt-level = 3
+
+# Optimized build for CPU performance
+[profile.cpu-optimized]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--cfg", "docsrs"]
