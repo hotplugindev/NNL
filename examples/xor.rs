@@ -1,7 +1,7 @@
-//! Simple XOR Neural Network Training Example - GPU Version
+//! Simple XOR Neural Network Training Example - Version
 //!
 //! This example demonstrates training a simple neural network to learn the XOR function
-//! using GPU acceleration. The network consists of a single hidden layer and uses
+//! using acceleration. The network consists of a single hidden layer and uses
 //! backpropagation for training.
 
 use nnl::prelude::*;
@@ -11,10 +11,9 @@ fn main() -> Result<()> {
     // Initialize logging
     env_logger::init();
 
-    println!("Simple XOR Neural Network Training - GPU Version");
+    println!("Simple XOR Neural Network Training");
     println!("===============================================");
 
-    // Try to get a GPU device, fall back to CPU if not available
     let device = Device::cpu()?;
 
     // Create XOR training data as individual samples
@@ -32,7 +31,7 @@ fn main() -> Result<()> {
         Tensor::from_slice_on_device(&[0.0], &[1, 1], device.clone())?,
     ];
 
-    println!("Training data created on GPU:");
+    println!("Training data created on CPU:");
     for (i, (input, target)) in train_inputs.iter().zip(train_targets.iter()).enumerate() {
         let input_data = input.to_vec()?;
         let target_data = target.to_vec()?;
@@ -87,7 +86,6 @@ fn main() -> Result<()> {
         initial_prediction.to_vec()?
     );
 
-    // Test if tensors are actually on GPU
     println!("Test tensor device: {:?}", test_input.device());
     println!("Network device: {:?}", device.device_type());
 
@@ -119,7 +117,7 @@ fn main() -> Result<()> {
     };
 
     println!("\nStarting training...");
-    println!("WARNING: GPU training is currently very slow. This may take several minutes...");
+    println!("WARNING: CPU training is currently very slow. This may take several minutes...");
     let start_time = Instant::now();
 
     // Check prediction before training to see if weights change
@@ -200,14 +198,14 @@ fn main() -> Result<()> {
     // Benchmark inference speed
     println!("\nBenchmarking inference speed...");
     let benchmark_input = &train_inputs[0];
-    let num_iterations = 100; // Reduced iterations due to slow GPU performance
+    let num_iterations = 100;
 
-    println!("Running {} inference iterations on GPU...", num_iterations);
+    println!("Running {} inference iterations on CPU...", num_iterations);
     let start_time = Instant::now();
     for _ in 0..num_iterations {
         let _ = network.forward(benchmark_input)?;
     }
-    // Ensure all GPU operations complete
+
     device.synchronize()?;
     let inference_time = start_time.elapsed();
 
@@ -217,24 +215,22 @@ fn main() -> Result<()> {
         num_iterations
     );
 
-    println!("GPU Performance Analysis:");
+    println!("CPU Performance Analysis:");
     println!(
-        "  - GPU inference: {:.4}ms per forward pass",
+        "  - CPU inference: {:.4}ms per forward pass",
         inference_time.as_secs_f64() * 1000.0 / num_iterations as f64
     );
     println!(
         "  - Training time per epoch: {:.4}s",
         training_time.as_secs_f64() / training_config.epochs as f64
     );
-    println!("  - GPU utilization appears to be very low");
-    println!("  - Consider using CPU for small networks like XOR");
 
     // Save the trained model
-    let model_path = "simple_xor_gpu_model.bin";
+    let model_path = "simple_xor_model.bin";
     nnl::io::save_model(&network, model_path, ModelFormat::Binary, None)?;
     println!("\nModel saved to: {}", model_path);
 
-    println!("\nSimple XOR GPU training example completed successfully!");
+    println!("\nSimple XOR training example completed successfully!");
 
     Ok(())
 }
@@ -244,8 +240,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_simple_xor_gpu() -> Result<()> {
-        // Skip GPU test if no GPU is available
+    fn test_simple_xor_() -> Result<()> {
         let device = Device::cpu()?;
 
         // Test basic tensor creation

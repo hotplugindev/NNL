@@ -47,32 +47,24 @@ pub fn binary_op(a: &Tensor, b: &Tensor, op: TensorOp) -> Result<Tensor> {
     }
 }
 
-/// CPU implementation of binary operations
+/// CPU implementation of binary operations using optimized device backend
 fn cpu_binary_op(a: &Tensor, b: &Tensor, op: TensorOp) -> Result<Tensor> {
-    let a_data = a.to_vec()?;
-    let b_data = b.to_vec()?;
+    let backend = a.device().backend();
 
-    let result_data: Vec<f32> = match op {
-        TensorOp::Add => a_data
-            .par_iter()
-            .zip(b_data.par_iter())
-            .map(|(&x, &y)| x + y)
-            .collect(),
-        TensorOp::Sub => a_data
-            .par_iter()
-            .zip(b_data.par_iter())
-            .map(|(&x, &y)| x - y)
-            .collect(),
-        TensorOp::Mul => a_data
-            .par_iter()
-            .zip(b_data.par_iter())
-            .map(|(&x, &y)| x * y)
-            .collect(),
-        TensorOp::Div => a_data
-            .par_iter()
-            .zip(b_data.par_iter())
-            .map(|(&x, &y)| x / y)
-            .collect(),
+    // Get input memories
+    let a_memory = get_tensor_memory(a)?;
+    let b_memory = get_tensor_memory(b)?;
+
+    // Allocate result memory
+    let result_memory = backend.allocate(a.shape().iter().product::<usize>())?;
+
+    // Create optimized CPU kernel based on operation
+    use crate::device::cpu::{CpuKernel, CpuOperation};
+    let cpu_op = match op {
+        TensorOp::Add => CpuOperation::ElementwiseAdd,
+        TensorOp::Sub => CpuOperation::ElementwiseSubtract,
+        TensorOp::Mul => CpuOperation::ElementwiseMultiply,
+        TensorOp::Div => CpuOperation::ElementwiseDivide,
         _ => {
             return Err(NnlError::unsupported(
                 "Operation not supported for binary tensors",
@@ -80,7 +72,19 @@ fn cpu_binary_op(a: &Tensor, b: &Tensor, op: TensorOp) -> Result<Tensor> {
         }
     };
 
-    Tensor::from_slice_on_device(&result_data, a.shape(), a.device().clone())
+    let kernel = CpuKernel::new(format!("elementwise_{:?}", op), cpu_op);
+
+    // Execute using optimized device backend
+    backend.execute_kernel(&kernel, &[a_memory, b_memory], &[result_memory.as_ref()])?;
+
+    // Create result tensor with the computed memory
+    Ok(Tensor {
+        data: crate::tensor::TensorData::Device(result_memory),
+        shape: a.shape().to_vec(),
+        device: a.device.clone(),
+        requires_grad: a.requires_grad || b.requires_grad,
+        grad: None,
+    })
 }
 
 /// GPU implementation of binary operations
@@ -219,10 +223,9 @@ pub fn matmul(a: &Tensor, b: &Tensor) -> Result<Tensor> {
     }
 }
 
-/// CPU matrix multiplication
+/// CPU matrix multiplication using optimized device backend
 fn cpu_matmul(a: &Tensor, b: &Tensor, output_shape: &[usize]) -> Result<Tensor> {
-    let a_data = a.to_vec()?;
-    let b_data = b.to_vec()?;
+    let backend = a.device().backend();
     let a_shape = a.shape();
     let b_shape = b.shape();
 
@@ -230,20 +233,31 @@ fn cpu_matmul(a: &Tensor, b: &Tensor, output_shape: &[usize]) -> Result<Tensor> 
     let k = a_shape[1];
     let n = b_shape[1];
 
-    let mut c_data = vec![0.0; m * n];
+    // Get input memories
+    let a_memory = get_tensor_memory(a)?;
+    let b_memory = get_tensor_memory(b)?;
 
-    // Parallel matrix multiplication
-    c_data.par_chunks_mut(n).enumerate().for_each(|(i, row)| {
-        for j in 0..n {
-            let mut sum = 0.0;
-            for l in 0..k {
-                sum += a_data[i * k + l] * b_data[l * n + j];
-            }
-            row[j] = sum;
-        }
-    });
+    // Allocate result memory
+    let result_memory = backend.allocate(output_shape.iter().product::<usize>())?;
 
-    Tensor::from_slice_on_device(&c_data, output_shape, a.device().clone())
+    // Create optimized CPU kernel with matrix dimensions
+    use crate::device::cpu::{CpuKernel, CpuOperation};
+    let kernel = CpuKernel::new(
+        "matrix_mul".to_string(),
+        CpuOperation::MatrixMultiply { m, n, k },
+    );
+
+    // Execute using optimized device backend
+    backend.execute_kernel(&kernel, &[a_memory, b_memory], &[result_memory.as_ref()])?;
+
+    // Create result tensor with the computed memory
+    Ok(Tensor {
+        data: crate::tensor::TensorData::Device(result_memory),
+        shape: output_shape.to_vec(),
+        device: a.device.clone(),
+        requires_grad: a.requires_grad || b.requires_grad,
+        grad: None,
+    })
 }
 
 /// GPU matrix multiplication
@@ -455,24 +469,10 @@ pub fn reduce_sum(tensor: &Tensor, dim: Option<usize>) -> Result<Tensor> {
 
 /// CPU square root implementation
 fn cpu_sqrt(tensor: &Tensor) -> Result<Tensor> {
-    use crate::tensor::{Tensor, TensorData};
-    use ndarray::{ArrayD, IxDyn};
+    let data = tensor.to_vec()?;
+    let result_data: Vec<f32> = data.iter().map(|&x| x.sqrt()).collect();
 
-    if let TensorData::Host(ref array) = tensor.data {
-        let result_data: Vec<f32> = array.iter().map(|&x| x.sqrt()).collect();
-        let result_array = ArrayD::from_shape_vec(IxDyn(&tensor.shape), result_data)
-            .map_err(|e| NnlError::tensor(&format!("Shape error in sqrt: {}", e)))?;
-
-        Ok(Tensor {
-            data: TensorData::Host(result_array),
-            shape: tensor.shape.clone(),
-            device: tensor.device.clone(),
-            requires_grad: tensor.requires_grad,
-            grad: None,
-        })
-    } else {
-        Err(NnlError::tensor("Expected host tensor for CPU sqrt"))
-    }
+    Tensor::from_slice_on_device(&result_data, &tensor.shape, tensor.device().clone())
 }
 
 /// GPU square root implementation
@@ -505,19 +505,13 @@ fn gpu_sqrt(tensor: &Tensor) -> Result<Tensor> {
 
 /// CPU transpose implementation
 fn cpu_transpose(tensor: &Tensor) -> Result<Tensor> {
-    use crate::tensor::{Tensor, TensorData};
+    let mut new_shape = tensor.shape().to_vec();
+    let last_idx = new_shape.len() - 1;
+    new_shape.swap(last_idx - 1, last_idx);
 
-    if let TensorData::Host(_) = tensor.data {
-        let mut new_shape = tensor.shape().to_vec();
-        let last_idx = new_shape.len() - 1;
-        new_shape.swap(last_idx - 1, last_idx);
-
-        let data = tensor.to_vec()?;
-        let transposed_data = transpose_data_2d(&data, tensor.shape())?;
-        Tensor::from_slice_on_device(&transposed_data, &new_shape, tensor.device().clone())
-    } else {
-        Err(NnlError::tensor("Expected host tensor for CPU transpose"))
-    }
+    let data = tensor.to_vec()?;
+    let transposed_data = transpose_data_2d(&data, tensor.shape())?;
+    Tensor::from_slice_on_device(&transposed_data, &new_shape, tensor.device().clone())
 }
 
 /// GPU transpose implementation

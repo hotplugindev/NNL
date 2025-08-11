@@ -52,28 +52,20 @@ impl Tensor {
     pub fn zeros_on_device(shape: &[usize], device: Device) -> Result<Self> {
         let total_elements = shape.iter().product::<usize>();
 
-        match device.device_type() {
-            DeviceType::Cpu => {
-                let array = ArrayD::zeros(IxDyn(shape));
-                Ok(Self {
-                    data: TensorData::Host(array),
-                    shape: shape.to_vec(),
-                    device: Arc::new(device),
-                    requires_grad: false,
-                    grad: None,
-                })
-            }
-            _ => {
-                let memory = device.backend().allocate(total_elements)?;
-                Ok(Self {
-                    data: TensorData::Device(memory),
-                    shape: shape.to_vec(),
-                    device: Arc::new(device),
-                    requires_grad: false,
-                    grad: None,
-                })
-            }
-        }
+        // Always use device memory for consistency and to leverage optimized backends
+        let memory = device.backend().allocate(total_elements)?;
+
+        // Zero-initialize the memory
+        let zeros = vec![0.0f32; total_elements];
+        device.backend().copy_to_device(&zeros, memory.as_ref())?;
+
+        Ok(Self {
+            data: TensorData::Device(memory),
+            shape: shape.to_vec(),
+            device: Arc::new(device),
+            requires_grad: false,
+            grad: None,
+        })
     }
 
     /// Create a new tensor with ones
@@ -106,30 +98,16 @@ impl Tensor {
             ));
         }
 
-        match device.device_type() {
-            DeviceType::Cpu => {
-                let array = ArrayD::from_shape_vec(IxDyn(shape), data.to_vec())
-                    .map_err(|e| NnlError::tensor(format!("Failed to create array: {}", e)))?;
-                Ok(Self {
-                    data: TensorData::Host(array),
-                    shape: shape.to_vec(),
-                    device: Arc::new(device),
-                    requires_grad: false,
-                    grad: None,
-                })
-            }
-            _ => {
-                let memory = device.backend().allocate(data.len())?;
-                device.backend().copy_to_device(data, memory.as_ref())?;
-                Ok(Self {
-                    data: TensorData::Device(memory),
-                    shape: shape.to_vec(),
-                    device: Arc::new(device),
-                    requires_grad: false,
-                    grad: None,
-                })
-            }
-        }
+        // Always use device memory for consistency and to leverage optimized backends
+        let memory = device.backend().allocate(data.len())?;
+        device.backend().copy_to_device(data, memory.as_ref())?;
+        Ok(Self {
+            data: TensorData::Device(memory),
+            shape: shape.to_vec(),
+            device: Arc::new(device),
+            requires_grad: false,
+            grad: None,
+        })
     }
 
     /// Create a tensor from an ndarray
