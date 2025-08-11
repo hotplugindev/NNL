@@ -33,8 +33,18 @@ use vulkano::{
     sync::{self, GpuFuture},
 };
 
+// Global singleton for Vulkan backend to prevent multiple device creation
+use std::sync::LazyLock;
+static GLOBAL_VULKAN_BACKEND: LazyLock<Mutex<Option<Arc<VulkanBackendImpl>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
 /// Real Vulkan compute backend with GPU-only execution
 pub struct VulkanBackend {
+    inner: Arc<VulkanBackendImpl>,
+}
+
+/// Internal Vulkan backend implementation
+struct VulkanBackendImpl {
     device: Arc<VkDevice>,
     queue: Arc<Queue>,
     memory_allocator: Arc<StandardMemoryAllocator>,
@@ -45,8 +55,25 @@ pub struct VulkanBackend {
 }
 
 impl VulkanBackend {
-    /// Create a new Vulkan backend with real GPU support
+    /// Create a new Vulkan backend with real GPU support (reuses existing device if available)
     pub fn new() -> Result<Self> {
+        let mut global = GLOBAL_VULKAN_BACKEND.lock().unwrap();
+
+        if let Some(ref inner) = *global {
+            return Ok(Self {
+                inner: inner.clone(),
+            });
+        }
+
+        // Create new backend instance
+        let inner = Self::create_backend_impl()?;
+        *global = Some(inner.clone());
+
+        Ok(Self { inner })
+    }
+
+    /// Create the actual backend implementation
+    fn create_backend_impl() -> Result<Arc<VulkanBackendImpl>> {
         // Initialize Vulkan library
         let library = VulkanLibrary::new()
             .map_err(|e| NnlError::gpu(format!("Failed to load Vulkan library: {}", e)))?;
@@ -136,7 +163,7 @@ impl VulkanBackend {
             supports_f64: false, // Simplified for compatibility
         };
 
-        Ok(Self {
+        Ok(Arc::new(VulkanBackendImpl {
             device,
             queue,
             memory_allocator,
@@ -144,12 +171,12 @@ impl VulkanBackend {
             descriptor_set_allocator,
             pipelines: Arc::new(Mutex::new(HashMap::new())),
             device_info,
-        })
+        }))
     }
 
     /// Get or create compute pipeline for the given shader
     fn get_pipeline(&self, shader_name: &str) -> Result<Arc<ComputePipeline>> {
-        let mut pipelines = self.pipelines.lock().unwrap();
+        let mut pipelines = self.inner.pipelines.lock().unwrap();
 
         if let Some(pipeline) = pipelines.get(shader_name) {
             return Ok(pipeline.clone());
@@ -160,7 +187,7 @@ impl VulkanBackend {
 
         let shader = unsafe {
             ShaderModule::new(
-                self.device.clone(),
+                self.inner.device.clone(),
                 ShaderModuleCreateInfo::new(&shader_code),
             )
             .map_err(|e| NnlError::gpu(format!("Failed to create shader module: {}", e)))?
@@ -169,15 +196,15 @@ impl VulkanBackend {
         // Create compute pipeline
         let stage = PipelineShaderStageCreateInfo::new(shader.entry_point("main").unwrap());
         let layout = PipelineLayout::new(
-            self.device.clone(),
+            self.inner.device.clone(),
             PipelineDescriptorSetLayoutCreateInfo::from_stages([&stage])
-                .into_pipeline_layout_create_info(self.device.clone())
+                .into_pipeline_layout_create_info(self.inner.device.clone())
                 .unwrap(),
         )
         .unwrap();
 
         let pipeline = ComputePipeline::new(
-            self.device.clone(),
+            self.inner.device.clone(),
             None,
             ComputePipelineCreateInfo::stage_layout(stage, layout),
         )
@@ -215,15 +242,7 @@ impl VulkanBackend {
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "matrix_mul" => Ok(include_bytes!("../shaders/matrix_mul_simple.spv")
-                .chunks_exact(4)
-                .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                .collect()),
-            "test_copy" => Ok(include_bytes!("../shaders/test_copy.spv")
-                .chunks_exact(4)
-                .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                .collect()),
-            "matrix_mul_optimized" => Ok(include_bytes!("../shaders/matrix_mul_optimized.spv")
+            "matrix_mul" => Ok(include_bytes!("../shaders/matrix_mul.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
@@ -287,8 +306,8 @@ impl VulkanBackend {
 
         // Create command buffer
         let mut builder = AutoCommandBufferBuilder::primary(
-            &self.command_buffer_allocator,
-            self.queue.queue_family_index(),
+            &self.inner.command_buffer_allocator,
+            self.inner.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
         .map_err(|e| NnlError::gpu(format!("Failed to create command buffer: {}", e)))?;
@@ -312,7 +331,7 @@ impl VulkanBackend {
         if let Some(uniform) = uniform_data {
             // Create uniform buffer with proper alignment
             let uniform_buffer = Buffer::from_iter(
-                self.memory_allocator.clone(),
+                self.inner.memory_allocator.clone(),
                 BufferCreateInfo {
                     usage: BufferUsage::UNIFORM_BUFFER,
                     ..Default::default()
@@ -338,7 +357,7 @@ impl VulkanBackend {
         }
 
         let descriptor_set = PersistentDescriptorSet::new(
-            &self.descriptor_set_allocator,
+            &self.inner.descriptor_set_allocator,
             layout.clone(),
             set_builder,
             [],
@@ -403,8 +422,8 @@ impl VulkanBackend {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         // Submit and wait for completion
-        let future = sync::now(self.device.clone())
-            .then_execute(self.queue.clone(), command_buffer)
+        let future = sync::now(self.inner.device.clone())
+            .then_execute(self.inner.queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
@@ -419,12 +438,12 @@ impl VulkanBackend {
 
 impl Backend for VulkanBackend {
     fn device_info(&self) -> Result<DeviceInfo> {
-        Ok(self.device_info.clone())
+        Ok(self.inner.device_info.clone())
     }
 
     fn allocate(&self, size: usize) -> Result<Arc<dyn DeviceMemory>> {
         let buffer = VulkanBuffer::new(
-            self.memory_allocator.clone(),
+            self.inner.memory_allocator.clone(),
             size * std::mem::size_of::<f32>(),
             false,
         )?;
@@ -433,7 +452,7 @@ impl Backend for VulkanBackend {
 
     fn allocate_uniform(&self, size: usize) -> Result<Arc<dyn DeviceMemory>> {
         let buffer = VulkanBuffer::new(
-            self.memory_allocator.clone(),
+            self.inner.memory_allocator.clone(),
             size * std::mem::size_of::<u32>(),
             true,
         )?;
@@ -444,13 +463,13 @@ impl Backend for VulkanBackend {
         let vulkan_buffer = memory
             .as_any()
             .downcast_ref::<VulkanBuffer>()
-            .ok_or_else(|| NnlError::device("Invalid memory type for Vulkan backend"))?;
+            .ok_or_else(|| NnlError::device("Invalid buffer type for Vulkan backend"))?;
 
         vulkan_buffer.write_data(
             data,
-            self.memory_allocator.clone(),
-            self.command_buffer_allocator.clone(),
-            self.queue.clone(),
+            self.inner.memory_allocator.clone(),
+            self.inner.command_buffer_allocator.clone(),
+            self.inner.queue.clone(),
         )
     }
 
@@ -458,13 +477,13 @@ impl Backend for VulkanBackend {
         let vulkan_buffer = memory
             .as_any()
             .downcast_ref::<VulkanBuffer>()
-            .ok_or_else(|| NnlError::device("Invalid memory type for Vulkan backend"))?;
+            .ok_or_else(|| NnlError::device("Invalid buffer type for Vulkan backend"))?;
 
         vulkan_buffer.write_u32_data(
             data,
-            self.memory_allocator.clone(),
-            self.command_buffer_allocator.clone(),
-            self.queue.clone(),
+            self.inner.memory_allocator.clone(),
+            self.inner.command_buffer_allocator.clone(),
+            self.inner.queue.clone(),
         )
     }
 
@@ -472,13 +491,13 @@ impl Backend for VulkanBackend {
         let vulkan_buffer = memory
             .as_any()
             .downcast_ref::<VulkanBuffer>()
-            .ok_or_else(|| NnlError::device("Invalid memory type for Vulkan backend"))?;
+            .ok_or_else(|| NnlError::device("Invalid buffer type for Vulkan backend"))?;
 
         vulkan_buffer.read_data(
             data,
-            self.memory_allocator.clone(),
-            self.command_buffer_allocator.clone(),
-            self.queue.clone(),
+            self.inner.memory_allocator.clone(),
+            self.inner.command_buffer_allocator.clone(),
+            self.inner.queue.clone(),
         )
     }
 
@@ -533,9 +552,9 @@ impl Backend for VulkanBackend {
                 .downcast_ref::<VulkanBuffer>()
                 .ok_or_else(|| NnlError::device("Invalid uniform buffer type"))?;
             Some(uniform_buffer.read_u32_data(
-                self.memory_allocator.clone(),
-                self.command_buffer_allocator.clone(),
-                self.queue.clone(),
+                self.inner.memory_allocator.clone(),
+                self.inner.command_buffer_allocator.clone(),
+                self.inner.queue.clone(),
             )?)
         } else {
             None
@@ -550,17 +569,16 @@ impl Backend for VulkanBackend {
     }
 
     fn synchronize(&self) -> Result<()> {
-        // Wait for all GPU operations to complete
         unsafe {
-            self.device
+            self.inner
+                .device
                 .wait_idle()
-                .map_err(|e| NnlError::gpu(format!("Failed to synchronize device: {}", e)))?;
-            Ok(())
+                .map_err(|e| NnlError::gpu(format!("Failed to synchronize device: {}", e)))
         }
     }
 
     fn is_available(&self) -> bool {
-        true
+        true // If we created the backend successfully, it's available
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -571,7 +589,7 @@ impl Backend for VulkanBackend {
 /// Real Vulkan buffer backed by GPU memory
 #[derive(Debug, Clone)]
 pub struct VulkanBuffer {
-    buffer: Subbuffer<[u32]>, // Use u32 as base type for flexibility
+    buffer: Subbuffer<[f32]>, // Use f32 directly for better performance
     size_in_bytes: usize,
     is_uniform: bool,
 }
@@ -583,15 +601,15 @@ impl VulkanBuffer {
         size_in_bytes: usize,
         is_uniform: bool,
     ) -> Result<Self> {
+        let size_in_f32s = size_in_bytes / std::mem::size_of::<f32>();
+
         let usage = if is_uniform {
             BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_SRC | BufferUsage::TRANSFER_DST
         } else {
             BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_SRC | BufferUsage::TRANSFER_DST
         };
 
-        let size_in_u32s = (size_in_bytes + 3) / 4; // Round up to u32 boundary
-
-        let buffer = Buffer::new_slice::<u32>(
+        let buffer = Buffer::new_slice::<f32>(
             allocator,
             BufferCreateInfo {
                 usage,
@@ -601,7 +619,7 @@ impl VulkanBuffer {
                 memory_type_filter: MemoryTypeFilter::PREFER_DEVICE,
                 ..Default::default()
             },
-            size_in_u32s as u64,
+            size_in_f32s as u64,
         )
         .map_err(|e| NnlError::gpu(format!("Failed to create buffer: {}", e)))?;
 
@@ -612,20 +630,20 @@ impl VulkanBuffer {
         })
     }
 
-    /// Write f32 data to GPU buffer using staging buffer
-    pub fn write_data(
+    /// Write u32 data to GPU buffer using staging buffer (for uniform buffers)
+    pub fn write_u32_data(
         &self,
-        data: &[f32],
+        data: &[u32],
         allocator: Arc<StandardMemoryAllocator>,
         command_allocator: Arc<StandardCommandBufferAllocator>,
         queue: Arc<Queue>,
     ) -> Result<()> {
-        if data.len() * std::mem::size_of::<f32>() != self.size_in_bytes {
+        if data.len() * std::mem::size_of::<u32>() != self.size_in_bytes {
             return Err(NnlError::device("Data size mismatch"));
         }
 
-        // Convert f32 to u32 for storage (preserving bit pattern)
-        let u32_data: Vec<u32> = data.iter().map(|&f| f.to_bits()).collect();
+        // Convert u32 to f32 for uniform compatibility
+        let f32_data: Vec<f32> = data.iter().map(|&x| x as f32).collect();
 
         // Create staging buffer
         let staging_buffer = Buffer::from_iter(
@@ -639,7 +657,7 @@ impl VulkanBuffer {
                     | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                 ..Default::default()
             },
-            u32_data.iter().cloned(),
+            f32_data.iter().cloned(),
         )
         .map_err(|e| NnlError::gpu(format!("Failed to create staging buffer: {}", e)))?;
 
@@ -660,35 +678,32 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue, command_buffer)
+            .then_execute(queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
         future
             .wait(None)
-            .map_err(|e| NnlError::gpu(format!("Failed to wait for GPU: {}", e)))?;
+            .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
 
         Ok(())
     }
 
-    /// Write u32 data to GPU buffer (for uniform buffers)
-    pub fn write_u32_data(
+    /// Write f32 data directly to GPU buffer using staging buffer
+    pub fn write_data(
         &self,
-        data: &[u32],
+        data: &[f32],
         allocator: Arc<StandardMemoryAllocator>,
         command_allocator: Arc<StandardCommandBufferAllocator>,
         queue: Arc<Queue>,
     ) -> Result<()> {
-        if !self.is_uniform {
-            return Err(NnlError::device("Buffer is not a uniform buffer"));
+        if data.len() * std::mem::size_of::<f32>() != self.size_in_bytes {
+            return Err(NnlError::device("Data size mismatch"));
         }
 
-        if data.len() * std::mem::size_of::<u32>() > self.size_in_bytes {
-            return Err(NnlError::device("Data size mismatch for u32 data"));
-        }
-
-        // Create staging buffer
+        // Create staging buffer directly with f32 data - no CPU conversion
+        // Create staging buffer for readback
         let staging_buffer = Buffer::from_iter(
             allocator,
             BufferCreateInfo {
@@ -721,14 +736,14 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue, command_buffer)
+            .then_execute(queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
         future
             .wait(None)
-            .map_err(|e| NnlError::gpu(format!("Failed to wait for GPU: {}", e)))?;
+            .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
 
         Ok(())
     }
@@ -806,17 +821,17 @@ impl VulkanBuffer {
         Ok(())
     }
 
-    /// Read u32 data from GPU buffer
+    /// Read u32 data from GPU buffer (for uniform buffers)
     pub fn read_u32_data(
         &self,
         allocator: Arc<StandardMemoryAllocator>,
         command_allocator: Arc<StandardCommandBufferAllocator>,
         queue: Arc<Queue>,
     ) -> Result<Vec<u32>> {
-        let size_in_u32s = self.size_in_bytes / std::mem::size_of::<u32>();
+        let data_len = self.size_in_bytes / std::mem::size_of::<f32>();
 
-        // Create staging buffer
-        let staging_buffer = Buffer::new_slice::<u32>(
+        // Create staging buffer for readback - f32 since that's what we store
+        let staging_buffer = Buffer::new_slice::<f32>(
             allocator,
             BufferCreateInfo {
                 usage: BufferUsage::TRANSFER_DST,
@@ -827,11 +842,11 @@ impl VulkanBuffer {
                     | MemoryTypeFilter::HOST_RANDOM_ACCESS,
                 ..Default::default()
             },
-            size_in_u32s as u64,
+            data_len as u64,
         )
         .map_err(|e| NnlError::gpu(format!("Failed to create staging buffer: {}", e)))?;
 
-        // Copy from device buffer
+        // Copy from device buffer to staging buffer
         let mut builder = AutoCommandBufferBuilder::primary(
             &command_allocator,
             queue.queue_family_index(),
@@ -851,21 +866,18 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue, command_buffer)
+            .then_execute(queue.clone(), command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
 
         future
             .wait(None)
-            .map_err(|e| NnlError::gpu(format!("Failed to wait for GPU: {}", e)))?;
+            .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
 
-        // Read from staging buffer
-        let staging_read = staging_buffer
-            .read()
-            .map_err(|e| NnlError::gpu(format!("Failed to read staging buffer: {}", e)))?;
-
-        Ok(staging_read.to_vec())
+        // Read from staging buffer and convert f32 back to u32 for uniform data
+        let staging_read = staging_buffer.read().unwrap();
+        Ok(staging_read.iter().map(|&f| f as u32).collect())
     }
 }
 

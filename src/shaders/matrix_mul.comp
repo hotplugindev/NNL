@@ -1,8 +1,8 @@
 #version 450
 
-// Fixed tiled matrix multiplication compute shader
+// Simple matrix multiplication compute shader (for debugging)
 // Computes: C = A * B where A is MxK, B is KxN, C is MxN
-// Uses shared memory tiling for high performance with proper bounds checking
+// No tiling - direct computation for clarity and correctness
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -24,62 +24,26 @@ layout(set = 0, binding = 3) uniform UniformBuffer {
     uint K;    // Cols of A, rows of B
 };
 
-// Shared memory for tiling optimization
-shared float tileA[16][16];
-shared float tileB[16][16];
-
 void main() {
-    uint globalRow = gl_GlobalInvocationID.y;
-    uint globalCol = gl_GlobalInvocationID.x;
-    uint localRow = gl_LocalInvocationID.y;
-    uint localCol = gl_LocalInvocationID.x;
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
 
     // Bounds checking for output matrix
-    if (globalRow >= M || globalCol >= N) {
+    if (row >= M || col >= N) {
         return;
     }
 
+    // Compute C[row][col] = sum over k of A[row][k] * B[k][col]
     float sum = 0.0;
 
-    // Process tiles across the K dimension
-    uint numTiles = (K + 15) / 16;
-
-    for (uint t = 0; t < numTiles; t++) {
-        // Calculate the actual tile bounds
-        uint tileStartK = t * 16;
-        uint tileEndK = min(tileStartK + 16, K);
-
-        // Load tile of A into shared memory
-        uint aRow = globalRow;
-        uint aCol = tileStartK + localCol;
-        if (aRow < M && aCol < K) {
-            tileA[localRow][localCol] = a[aRow * K + aCol];
-        } else {
-            tileA[localRow][localCol] = 0.0;
-        }
-
-        // Load tile of B into shared memory
-        uint bRow = tileStartK + localRow;
-        uint bCol = globalCol;
-        if (bRow < K && bCol < N) {
-            tileB[localRow][localCol] = b[bRow * N + bCol];
-        } else {
-            tileB[localRow][localCol] = 0.0;
-        }
-
-        // Synchronize to ensure all threads have loaded their data
-        barrier();
-
-        // Compute partial dot product using shared memory
-        // Only process the valid range within this tile
-        for (uint k = 0; k < (tileEndK - tileStartK); k++) {
-            sum += tileA[localRow][k] * tileB[k][localCol];
-        }
-
-        // Synchronize before loading next tile
-        barrier();
+    for (uint k = 0; k < K; k++) {
+        // A is stored row-major: A[row][k] = a[row * K + k]
+        // B is stored row-major: B[k][col] = b[k * N + col]
+        float a_val = a[row * K + k];
+        float b_val = b[k * N + col];
+        sum += a_val * b_val;
     }
 
-    // Store result
-    result[globalRow * N + globalCol] = sum;
+    // Store result C[row][col] = result[row * N + col]
+    result[row * N + col] = sum;
 }
