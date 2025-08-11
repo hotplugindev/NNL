@@ -214,18 +214,20 @@ impl VulkanBackend {
             }
         }
 
+        // Configure async executor based on available queues
+        let num_available_queues = all_queues.len();
         let async_executor = Arc::new(
             AsyncExecutor::with_config(
                 device.clone(),
                 all_queues,
                 AsyncExecutorConfig {
-                    num_compute_streams: 4,
-                    num_transfer_streams: 2,
+                    num_compute_streams: num_available_queues.min(1), // Use 1 compute stream for single queue
+                    num_transfer_streams: 0, // No separate transfer streams with single queue
                     max_operations_per_stream: 512,
-                    enable_load_balancing: true,
-                    enable_transfer_overlap: true,
-                    stream_selection: crate::device::async_executor::StreamSelection::LeastBusy,
-                    thread_pool_size: 2,
+                    enable_load_balancing: false, // Disable load balancing with single stream
+                    enable_transfer_overlap: false, // Disable transfer overlap with single queue
+                    stream_selection: crate::device::async_executor::StreamSelection::RoundRobin,
+                    thread_pool_size: 1, // Reduce thread pool size for single queue
                     operation_timeout_secs: 30,
                 },
             )
@@ -513,6 +515,8 @@ impl Backend for VulkanBackend {
 
     fn allocate(&self, size: usize) -> Result<Arc<dyn DeviceMemory>> {
         // Use memory pool for better performance
+        // size is already the number of f32 elements, so convert to bytes
+        // size parameter represents number of f32 elements, convert to bytes for buffer allocation
         let buffer_size = size * std::mem::size_of::<f32>();
         let pooled_buffer = self.inner.memory_pool.get_buffer(buffer_size)?;
         Ok(pooled_buffer as Arc<dyn DeviceMemory>)
@@ -792,8 +796,15 @@ impl VulkanBuffer {
         command_allocator: Arc<StandardCommandBufferAllocator>,
         queue: Arc<Queue>,
     ) -> Result<()> {
-        if data.len() * std::mem::size_of::<f32>() != self.size_in_bytes {
-            return Err(NnlError::device("Data size mismatch"));
+        let expected_bytes = data.len() * std::mem::size_of::<f32>();
+        if expected_bytes > self.size_in_bytes {
+            return Err(NnlError::device(&format!(
+                "Data too large for buffer: expected {} bytes (data.len()={} * {}), but buffer size is only {} bytes",
+                expected_bytes,
+                data.len(),
+                std::mem::size_of::<f32>(),
+                self.size_in_bytes
+            )));
         }
 
         // Create staging buffer directly with f32 data - no CPU conversion
@@ -848,14 +859,21 @@ impl VulkanBuffer {
         command_allocator: Arc<StandardCommandBufferAllocator>,
         queue: Arc<Queue>,
     ) -> Result<()> {
-        if output.len() * std::mem::size_of::<f32>() != self.size_in_bytes {
-            return Err(NnlError::device("Output size mismatch"));
+        let expected_bytes = output.len() * std::mem::size_of::<f32>();
+        if expected_bytes > self.size_in_bytes {
+            return Err(NnlError::device(&format!(
+                "Output buffer too large: expected {} bytes (output.len()={} * {}), but buffer size is only {} bytes",
+                expected_bytes,
+                output.len(),
+                std::mem::size_of::<f32>(),
+                self.size_in_bytes
+            )));
         }
 
-        let size_in_u32s = output.len();
+        let size_in_f32s = output.len();
 
         // Create staging buffer
-        let staging_buffer = Buffer::new_slice::<u32>(
+        let staging_buffer = Buffer::new_slice::<f32>(
             allocator,
             BufferCreateInfo {
                 usage: BufferUsage::TRANSFER_DST,
@@ -866,7 +884,7 @@ impl VulkanBuffer {
                     | MemoryTypeFilter::HOST_RANDOM_ACCESS,
                 ..Default::default()
             },
-            size_in_u32s as u64,
+            size_in_f32s as u64,
         )
         .map_err(|e| NnlError::gpu(format!("Failed to create staging buffer: {}", e)))?;
 
@@ -900,14 +918,14 @@ impl VulkanBuffer {
             .wait(None)
             .map_err(|e| NnlError::gpu(format!("Failed to wait for transfer: {}", e)))?;
 
-        // Read from staging buffer and convert u32 back to f32
+        // Read from staging buffer directly as f32
         let staging_read = staging_buffer
             .read()
             .map_err(|e| NnlError::gpu(format!("Failed to read staging buffer: {}", e)))?;
 
-        for (i, &u32_val) in staging_read.iter().enumerate() {
+        for (i, &f32_val) in staging_read.iter().enumerate() {
             if i < output.len() {
-                output[i] = f32::from_bits(u32_val);
+                output[i] = f32_val;
             }
         }
 

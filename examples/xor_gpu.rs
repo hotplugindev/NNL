@@ -15,31 +15,65 @@ fn main() -> Result<()> {
     println!("===============================================");
 
     // Try to get a GPU device, fall back to CPU if not available
-    let device = match Device::vulkan().or_else(|_| Device::cpu()) {
+    println!("Attempting to initialize Vulkan GPU device...");
+    let device = match Device::vulkan() {
         Ok(device) => {
+            println!("✅ Successfully initialized Vulkan device!");
             println!("Using device: {:?}", device.device_type());
+            println!("Device name: {}", device.info().name);
+            println!("Memory size: {:?}", device.info().memory_size);
+            println!("Compute units: {:?}", device.info().compute_units);
             device
         }
         Err(e) => {
-            println!("Failed to initialize GPU device: {}", e);
-            println!("Falling back to CPU");
-            Device::cpu()?
+            println!("❌ Failed to initialize Vulkan GPU device: {}", e);
+            println!("Error details: {:?}", e);
+            println!("Falling back to CPU...");
+            let cpu_device = Device::cpu()?;
+            println!("Using device: {:?}", cpu_device.device_type());
+            cpu_device
         }
     };
 
     // Create XOR training data as individual samples
+    println!("Creating training data tensors on GPU...");
     let train_inputs = vec![
-        Tensor::from_slice_on_device(&[0.0, 0.0], &[1, 2], device.clone())?,
-        Tensor::from_slice_on_device(&[0.0, 1.0], &[1, 2], device.clone())?,
-        Tensor::from_slice_on_device(&[1.0, 0.0], &[1, 2], device.clone())?,
-        Tensor::from_slice_on_device(&[1.0, 1.0], &[1, 2], device.clone())?,
+        {
+            println!("Creating input tensor [0.0, 0.0]...");
+            Tensor::from_slice_on_device(&[0.0, 0.0], &[1, 2], device.clone())?
+        },
+        {
+            println!("Creating input tensor [0.0, 1.0]...");
+            Tensor::from_slice_on_device(&[0.0, 1.0], &[1, 2], device.clone())?
+        },
+        {
+            println!("Creating input tensor [1.0, 0.0]...");
+            Tensor::from_slice_on_device(&[1.0, 0.0], &[1, 2], device.clone())?
+        },
+        {
+            println!("Creating input tensor [1.0, 1.0]...");
+            Tensor::from_slice_on_device(&[1.0, 1.0], &[1, 2], device.clone())?
+        },
     ];
 
+    println!("Creating target tensors...");
     let train_targets = vec![
-        Tensor::from_slice_on_device(&[0.0], &[1, 1], device.clone())?,
-        Tensor::from_slice_on_device(&[1.0], &[1, 1], device.clone())?,
-        Tensor::from_slice_on_device(&[1.0], &[1, 1], device.clone())?,
-        Tensor::from_slice_on_device(&[0.0], &[1, 1], device.clone())?,
+        {
+            println!("Creating target tensor [0.0]...");
+            Tensor::from_slice_on_device(&[0.0], &[1, 1], device.clone())?
+        },
+        {
+            println!("Creating target tensor [1.0]...");
+            Tensor::from_slice_on_device(&[1.0], &[1, 1], device.clone())?
+        },
+        {
+            println!("Creating target tensor [1.0]...");
+            Tensor::from_slice_on_device(&[1.0], &[1, 1], device.clone())?
+        },
+        {
+            println!("Creating target tensor [0.0]...");
+            Tensor::from_slice_on_device(&[0.0], &[1, 1], device.clone())?
+        },
     ];
 
     println!("Training data created on GPU:");
@@ -56,6 +90,7 @@ fn main() -> Result<()> {
     }
 
     // Build the neural network
+    println!("Building neural network...");
     let mut network = NetworkBuilder::new()
         .add_layer(LayerConfig::Dense {
             input_size: 2,
@@ -82,6 +117,7 @@ fn main() -> Result<()> {
         })
         .device(device.clone())
         .build()?;
+    println!("✅ Network built successfully!");
 
     println!(
         "\nNetwork created with {} parameters",
@@ -91,7 +127,18 @@ fn main() -> Result<()> {
     // Debug: Check initial weights to ensure they're properly initialized
     println!("\nDebugging weight initialization...");
     let test_input = &train_inputs[0];
-    let initial_prediction = network.forward(test_input)?;
+    println!("Running initial forward pass...");
+    let initial_prediction = match network.forward(test_input) {
+        Ok(prediction) => {
+            println!("✅ Initial forward pass successful!");
+            prediction
+        }
+        Err(e) => {
+            println!("❌ Initial forward pass failed: {}", e);
+            println!("Error details: {:?}", e);
+            return Err(e);
+        }
+    };
     println!(
         "Initial prediction value: {:?}",
         initial_prediction.to_vec()?
