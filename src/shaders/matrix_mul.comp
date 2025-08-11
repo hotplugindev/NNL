@@ -1,8 +1,8 @@
 #version 450
 
-// Optimized matrix multiplication compute shader
+// Fixed tiled matrix multiplication compute shader
 // Computes: C = A * B where A is MxK, B is KxN, C is MxN
-// Uses shared memory tiling for high performance
+// Uses shared memory tiling for high performance with proper bounds checking
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -25,9 +25,8 @@ layout(set = 0, binding = 3) uniform UniformBuffer {
 };
 
 // Shared memory for tiling optimization
-// Add padding to avoid bank conflicts
-shared float tileA[16][17];
-shared float tileB[16][17];
+shared float tileA[16][16];
+shared float tileB[16][16];
 
 void main() {
     uint globalRow = gl_GlobalInvocationID.y;
@@ -46,9 +45,13 @@ void main() {
     uint numTiles = (K + 15) / 16;
 
     for (uint t = 0; t < numTiles; t++) {
+        // Calculate the actual tile bounds
+        uint tileStartK = t * 16;
+        uint tileEndK = min(tileStartK + 16, K);
+
         // Load tile of A into shared memory
         uint aRow = globalRow;
-        uint aCol = t * 16 + localCol;
+        uint aCol = tileStartK + localCol;
         if (aRow < M && aCol < K) {
             tileA[localRow][localCol] = a[aRow * K + aCol];
         } else {
@@ -56,7 +59,7 @@ void main() {
         }
 
         // Load tile of B into shared memory
-        uint bRow = t * 16 + localRow;
+        uint bRow = tileStartK + localRow;
         uint bCol = globalCol;
         if (bRow < K && bCol < N) {
             tileB[localRow][localCol] = b[bRow * N + bCol];
@@ -68,7 +71,8 @@ void main() {
         barrier();
 
         // Compute partial dot product using shared memory
-        for (uint k = 0; k < 16; k++) {
+        // Only process the valid range within this tile
+        for (uint k = 0; k < (tileEndK - tileStartK); k++) {
             sum += tileA[localRow][k] * tileB[k][localCol];
         }
 

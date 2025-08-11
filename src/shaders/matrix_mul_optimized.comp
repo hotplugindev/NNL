@@ -1,0 +1,93 @@
+#version 450
+
+// Optimized tiled matrix multiplication compute shader
+// Computes: C = A * B where A is MxK, B is KxN, C is MxN
+// Uses shared memory tiling for high performance with proper synchronization
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer InputBufferA {
+    float a[];
+};
+
+layout(set = 0, binding = 1) buffer InputBufferB {
+    float b[];
+};
+
+layout(set = 0, binding = 2) buffer OutputBuffer {
+    float result[];
+};
+
+layout(set = 0, binding = 3) uniform UniformBuffer {
+    uint M;    // Rows of A, rows of C
+    uint N;    // Cols of B, cols of C
+    uint K;    // Cols of A, rows of B
+};
+
+// Shared memory tiles with padding to avoid bank conflicts
+shared float tileA[16][17];
+shared float tileB[16][17];
+
+void main() {
+    // Global thread coordinates
+    uint globalRow = gl_GlobalInvocationID.y;
+    uint globalCol = gl_GlobalInvocationID.x;
+
+    // Local thread coordinates within workgroup
+    uint localRow = gl_LocalInvocationID.y;
+    uint localCol = gl_LocalInvocationID.x;
+
+    // Early exit if outside output matrix bounds
+    if (globalRow >= M || globalCol >= N) {
+        return;
+    }
+
+    float sum = 0.0;
+
+    // Calculate number of tiles needed to cover K dimension
+    uint numTiles = (K + 15) / 16;
+
+    // Process each tile
+    for (uint tileIdx = 0; tileIdx < numTiles; tileIdx++) {
+        // Calculate global indices for this tile
+        uint tileStartK = tileIdx * 16;
+
+        // Load tile of matrix A into shared memory
+        uint aGlobalRow = globalRow;
+        uint aGlobalCol = tileStartK + localCol;
+
+        if (aGlobalRow < M && aGlobalCol < K) {
+            tileA[localRow][localCol] = a[aGlobalRow * K + aGlobalCol];
+        } else {
+            tileA[localRow][localCol] = 0.0;
+        }
+
+        // Load tile of matrix B into shared memory
+        uint bGlobalRow = tileStartK + localRow;
+        uint bGlobalCol = globalCol;
+
+        if (bGlobalRow < K && bGlobalCol < N) {
+            tileB[localRow][localCol] = b[bGlobalRow * N + bGlobalCol];
+        } else {
+            tileB[localRow][localCol] = 0.0;
+        }
+
+        // Synchronize to ensure all threads have loaded their tile data
+        barrier();
+
+        // Compute partial dot product for this tile
+        // Only iterate over valid elements in the tile
+        uint tileSize = min(16u, K - tileStartK);
+        for (uint k = 0; k < tileSize; k++) {
+            sum += tileA[localRow][k] * tileB[k][localCol];
+        }
+
+        // Synchronize before loading next tile
+        barrier();
+    }
+
+    // Store final result
+    if (globalRow < M && globalCol < N) {
+        result[globalRow * N + globalCol] = sum;
+    }
+}

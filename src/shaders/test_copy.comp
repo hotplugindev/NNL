@@ -1,0 +1,26 @@
+#version 450
+
+// Simple test shader to verify data flow from input to output
+// This shader just copies input data to output to verify GPU pipeline is working
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) buffer InputBuffer {
+    float input_data[];
+};
+
+layout(set = 0, binding = 1) buffer OutputBuffer {
+    float output_data[];
+};
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    // Bounds check
+    if (index >= input_data.length()) {
+        return;
+    }
+
+    // Simple copy operation
+    output_data[index] = input_data[index];
+}

@@ -12,7 +12,7 @@ use vulkano::{
     VulkanLibrary,
     buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer},
     command_buffer::{
-        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryAutoCommandBuffer,
+        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo,
         allocator::StandardCommandBufferAllocator,
     },
     descriptor_set::{
@@ -133,7 +133,7 @@ impl VulkanBackend {
             memory_size: Some(total_memory),
             compute_units: Some(properties.max_compute_work_group_count[0]),
             supports_f16: false, // Can be extended later
-            supports_f64: properties.shader_float64 != 0,
+            supports_f64: false, // Simplified for compatibility
         };
 
         Ok(Self {
@@ -158,11 +158,13 @@ impl VulkanBackend {
         // Create shader module
         let shader_code = Self::get_shader_spirv(shader_name)?;
 
-        let shader = ShaderModule::new(
-            self.device.clone(),
-            ShaderModuleCreateInfo::new(&shader_code),
-        )
-        .map_err(|e| NnlError::gpu(format!("Failed to create shader module: {}", e)))?;
+        let shader = unsafe {
+            ShaderModule::new(
+                self.device.clone(),
+                ShaderModuleCreateInfo::new(&shader_code),
+            )
+            .map_err(|e| NnlError::gpu(format!("Failed to create shader module: {}", e)))?
+        };
 
         // Create compute pipeline
         let stage = PipelineShaderStageCreateInfo::new(shader.entry_point("main").unwrap());
@@ -181,7 +183,6 @@ impl VulkanBackend {
         )
         .map_err(|e| NnlError::gpu(format!("Failed to create compute pipeline: {}", e)))?;
 
-        let pipeline = Arc::new(pipeline);
         pipelines.insert(shader_name.to_string(), pipeline.clone());
         Ok(pipeline)
     }
@@ -190,75 +191,83 @@ impl VulkanBackend {
     fn get_shader_spirv(shader_name: &str) -> Result<Vec<u32>> {
         // Load pre-compiled SPIR-V shaders
         match shader_name {
-            "elementwise_add" => Ok(include_bytes!("../../shaders/elementwise_add.spv")
+            "elementwise_add" => Ok(include_bytes!("../shaders/elementwise_add.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "elementwise_sub" => Ok(include_bytes!("../../shaders/elementwise_sub.spv")
+            "elementwise_sub" => Ok(include_bytes!("../shaders/elementwise_sub.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "elementwise_mul" => Ok(include_bytes!("../../shaders/elementwise_mul.spv")
+            "elementwise_mul" => Ok(include_bytes!("../shaders/elementwise_mul.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "elementwise_div" => Ok(include_bytes!("../../shaders/elementwise_div.spv")
+            "elementwise_div" => Ok(include_bytes!("../shaders/elementwise_div.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "scalar_add" => Ok(include_bytes!("../../shaders/scalar_add.spv")
+            "scalar_add" => Ok(include_bytes!("../shaders/scalar_add.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "scalar_mul" => Ok(include_bytes!("../../shaders/scalar_mul.spv")
+            "scalar_mul" => Ok(include_bytes!("../shaders/scalar_mul.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "matrix_mul" => Ok(include_bytes!("../../shaders/matrix_mul.spv")
+            "matrix_mul" => Ok(include_bytes!("../shaders/matrix_mul_simple.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "relu" => Ok(include_bytes!("../../shaders/relu.spv")
+            "test_copy" => Ok(include_bytes!("../shaders/test_copy.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "sigmoid" => Ok(include_bytes!("../../shaders/sigmoid.spv")
+            "matrix_mul_optimized" => Ok(include_bytes!("../shaders/matrix_mul_optimized.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "tanh" => Ok(include_bytes!("../../shaders/tanh.spv")
+            "relu" => Ok(include_bytes!("../shaders/relu.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "softmax" => Ok(include_bytes!("../../shaders/softmax.spv")
+            "sigmoid" => Ok(include_bytes!("../shaders/sigmoid.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "transpose" => Ok(include_bytes!("../../shaders/transpose.spv")
+            "tanh" => Ok(include_bytes!("../shaders/tanh.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "copy" => Ok(include_bytes!("../../shaders/copy.spv")
+            "softmax" => Ok(include_bytes!("../shaders/softmax.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "sqrt" => Ok(include_bytes!("../../shaders/sqrt.spv")
+            "transpose" => Ok(include_bytes!("../shaders/transpose.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "gelu" => Ok(include_bytes!("../../shaders/gelu.spv")
+            "copy" => Ok(include_bytes!("../shaders/copy.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "swish" => Ok(include_bytes!("../../shaders/swish.spv")
+            "sqrt" => Ok(include_bytes!("../shaders/sqrt.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "reduce_sum" => Ok(include_bytes!("../../shaders/reduce_sum.spv")
+            "gelu" => Ok(include_bytes!("../shaders/gelu.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
-            "conv2d" => Ok(include_bytes!("../../shaders/conv2d.spv")
+            "swish" => Ok(include_bytes!("../shaders/swish.spv")
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect()),
+            "reduce_sum" => Ok(include_bytes!("../shaders/reduce_sum.spv")
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect()),
+            "conv2d" => Ok(include_bytes!("../shaders/conv2d.spv")
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect()),
@@ -336,31 +345,43 @@ impl VulkanBackend {
         )
         .map_err(|e| NnlError::gpu(format!("Failed to create descriptor set: {}", e)))?;
 
-        // Calculate dispatch size
-        let total_elements = if !output_buffers.is_empty() {
-            output_buffers[0].size() / std::mem::size_of::<f32>()
-        } else {
-            return Err(NnlError::gpu("No output buffers provided"));
-        };
+        // Calculate dispatch size based on operation type
+        let (dispatch_x, dispatch_y) = if operation == "matrix_mul" {
+            // For matrix multiplication, get dimensions from uniform data
+            if let Some(uniform) = uniform_data {
+                let m = uniform[0] as u32; // Rows of output matrix C
+                let n = uniform[1] as u32; // Cols of output matrix C
+                let _k = uniform[2] as u32; // K dimension (for validation)
 
-        let local_size = match operation {
-            "matrix_mul" => 16u32, // Use 16x16 workgroups for matrix operations
-            "transpose" => 16u32,
-            _ => 64u32, // Default workgroup size for other operations
-        };
-
-        let dispatch_x = if operation == "matrix_mul" || operation == "transpose" {
-            // For 2D operations, calculate based on output matrix dimensions
-            // This is a simplified approach - in practice you'd get dimensions from uniform
-            ((total_elements as f32).sqrt() as u32 + local_size - 1) / local_size
+                // Calculate workgroups needed to cover the output matrix
+                let local_size = 16u32;
+                let groups_x = (n + local_size - 1) / local_size;
+                let groups_y = (m + local_size - 1) / local_size;
+                (groups_x, groups_y)
+            } else {
+                return Err(NnlError::gpu(
+                    "Matrix multiplication requires uniform buffer with dimensions",
+                ));
+            }
+        } else if operation == "transpose" {
+            let total_elements = if !output_buffers.is_empty() {
+                output_buffers[0].size() / std::mem::size_of::<f32>()
+            } else {
+                return Err(NnlError::gpu("No output buffers provided"));
+            };
+            let local_size = 16u32;
+            let dispatch_x = ((total_elements as f32).sqrt() as u32 + local_size - 1) / local_size;
+            (dispatch_x, dispatch_x)
         } else {
-            ((total_elements as u32) + local_size - 1) / local_size
-        };
-
-        let dispatch_y = if operation == "matrix_mul" || operation == "transpose" {
-            dispatch_x // Square dispatch for matrix operations
-        } else {
-            1
+            // For 1D operations
+            let total_elements = if !output_buffers.is_empty() {
+                output_buffers[0].size() / std::mem::size_of::<f32>()
+            } else {
+                return Err(NnlError::gpu("No output buffers provided"));
+            };
+            let local_size = 64u32;
+            let dispatch_x = ((total_elements as u32) + local_size - 1) / local_size;
+            (dispatch_x, 1)
         };
 
         // Record commands
@@ -427,9 +448,9 @@ impl Backend for VulkanBackend {
 
         vulkan_buffer.write_data(
             data,
-            &self.memory_allocator,
-            &self.command_buffer_allocator,
-            &self.queue,
+            self.memory_allocator.clone(),
+            self.command_buffer_allocator.clone(),
+            self.queue.clone(),
         )
     }
 
@@ -441,9 +462,9 @@ impl Backend for VulkanBackend {
 
         vulkan_buffer.write_u32_data(
             data,
-            &self.memory_allocator,
-            &self.command_buffer_allocator,
-            &self.queue,
+            self.memory_allocator.clone(),
+            self.command_buffer_allocator.clone(),
+            self.queue.clone(),
         )
     }
 
@@ -455,9 +476,9 @@ impl Backend for VulkanBackend {
 
         vulkan_buffer.read_data(
             data,
-            &self.memory_allocator,
-            &self.command_buffer_allocator,
-            &self.queue,
+            self.memory_allocator.clone(),
+            self.command_buffer_allocator.clone(),
+            self.queue.clone(),
         )
     }
 
@@ -512,9 +533,9 @@ impl Backend for VulkanBackend {
                 .downcast_ref::<VulkanBuffer>()
                 .ok_or_else(|| NnlError::device("Invalid uniform buffer type"))?;
             Some(uniform_buffer.read_u32_data(
-                &self.memory_allocator,
-                &self.command_buffer_allocator,
-                &self.queue,
+                self.memory_allocator.clone(),
+                self.command_buffer_allocator.clone(),
+                self.queue.clone(),
             )?)
         } else {
             None
@@ -530,10 +551,12 @@ impl Backend for VulkanBackend {
 
     fn synchronize(&self) -> Result<()> {
         // Wait for all GPU operations to complete
-        self.device
-            .wait_idle()
-            .map_err(|e| NnlError::gpu(format!("Failed to synchronize device: {}", e)))?;
-        Ok(())
+        unsafe {
+            self.device
+                .wait_idle()
+                .map_err(|e| NnlError::gpu(format!("Failed to synchronize device: {}", e)))?;
+            Ok(())
+        }
     }
 
     fn is_available(&self) -> bool {
@@ -561,7 +584,7 @@ impl VulkanBuffer {
         is_uniform: bool,
     ) -> Result<Self> {
         let usage = if is_uniform {
-            BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST
+            BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_SRC | BufferUsage::TRANSFER_DST
         } else {
             BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_SRC | BufferUsage::TRANSFER_DST
         };
@@ -593,9 +616,9 @@ impl VulkanBuffer {
     pub fn write_data(
         &self,
         data: &[f32],
-        allocator: &StandardMemoryAllocator,
-        command_allocator: &StandardCommandBufferAllocator,
-        queue: &Queue,
+        allocator: Arc<StandardMemoryAllocator>,
+        command_allocator: Arc<StandardCommandBufferAllocator>,
+        queue: Arc<Queue>,
     ) -> Result<()> {
         if data.len() * std::mem::size_of::<f32>() != self.size_in_bytes {
             return Err(NnlError::device("Data size mismatch"));
@@ -606,7 +629,7 @@ impl VulkanBuffer {
 
         // Create staging buffer
         let staging_buffer = Buffer::from_iter(
-            allocator.clone(),
+            allocator,
             BufferCreateInfo {
                 usage: BufferUsage::TRANSFER_SRC,
                 ..Default::default()
@@ -622,7 +645,7 @@ impl VulkanBuffer {
 
         // Copy to device buffer
         let mut builder = AutoCommandBufferBuilder::primary(
-            command_allocator,
+            &command_allocator,
             queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
@@ -637,7 +660,7 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue.clone(), command_buffer)
+            .then_execute(queue, command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
@@ -653,9 +676,9 @@ impl VulkanBuffer {
     pub fn write_u32_data(
         &self,
         data: &[u32],
-        allocator: &StandardMemoryAllocator,
-        command_allocator: &StandardCommandBufferAllocator,
-        queue: &Queue,
+        allocator: Arc<StandardMemoryAllocator>,
+        command_allocator: Arc<StandardCommandBufferAllocator>,
+        queue: Arc<Queue>,
     ) -> Result<()> {
         if !self.is_uniform {
             return Err(NnlError::device("Buffer is not a uniform buffer"));
@@ -667,7 +690,7 @@ impl VulkanBuffer {
 
         // Create staging buffer
         let staging_buffer = Buffer::from_iter(
-            allocator.clone(),
+            allocator,
             BufferCreateInfo {
                 usage: BufferUsage::TRANSFER_SRC,
                 ..Default::default()
@@ -683,7 +706,7 @@ impl VulkanBuffer {
 
         // Copy to device buffer
         let mut builder = AutoCommandBufferBuilder::primary(
-            command_allocator,
+            &command_allocator,
             queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
@@ -698,7 +721,7 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue.clone(), command_buffer)
+            .then_execute(queue, command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
@@ -714,9 +737,9 @@ impl VulkanBuffer {
     pub fn read_data(
         &self,
         output: &mut [f32],
-        allocator: &StandardMemoryAllocator,
-        command_allocator: &StandardCommandBufferAllocator,
-        queue: &Queue,
+        allocator: Arc<StandardMemoryAllocator>,
+        command_allocator: Arc<StandardCommandBufferAllocator>,
+        queue: Arc<Queue>,
     ) -> Result<()> {
         if output.len() * std::mem::size_of::<f32>() != self.size_in_bytes {
             return Err(NnlError::device("Output size mismatch"));
@@ -726,7 +749,7 @@ impl VulkanBuffer {
 
         // Create staging buffer
         let staging_buffer = Buffer::new_slice::<u32>(
-            allocator.clone(),
+            allocator,
             BufferCreateInfo {
                 usage: BufferUsage::TRANSFER_DST,
                 ..Default::default()
@@ -742,7 +765,7 @@ impl VulkanBuffer {
 
         // Copy from device buffer
         let mut builder = AutoCommandBufferBuilder::primary(
-            command_allocator,
+            &command_allocator,
             queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
@@ -760,7 +783,7 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue.clone(), command_buffer)
+            .then_execute(queue, command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
@@ -786,15 +809,15 @@ impl VulkanBuffer {
     /// Read u32 data from GPU buffer
     pub fn read_u32_data(
         &self,
-        allocator: &StandardMemoryAllocator,
-        command_allocator: &StandardCommandBufferAllocator,
-        queue: &Queue,
+        allocator: Arc<StandardMemoryAllocator>,
+        command_allocator: Arc<StandardCommandBufferAllocator>,
+        queue: Arc<Queue>,
     ) -> Result<Vec<u32>> {
         let size_in_u32s = self.size_in_bytes / std::mem::size_of::<u32>();
 
         // Create staging buffer
         let staging_buffer = Buffer::new_slice::<u32>(
-            allocator.clone(),
+            allocator,
             BufferCreateInfo {
                 usage: BufferUsage::TRANSFER_DST,
                 ..Default::default()
@@ -810,7 +833,7 @@ impl VulkanBuffer {
 
         // Copy from device buffer
         let mut builder = AutoCommandBufferBuilder::primary(
-            command_allocator,
+            &command_allocator,
             queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
@@ -828,7 +851,7 @@ impl VulkanBuffer {
             .map_err(|e| NnlError::gpu(format!("Failed to build command buffer: {}", e)))?;
 
         let future = sync::now(queue.device().clone())
-            .then_execute(queue.clone(), command_buffer)
+            .then_execute(queue, command_buffer)
             .map_err(|e| NnlError::gpu(format!("Failed to execute command buffer: {}", e)))?
             .then_signal_fence_and_flush()
             .map_err(|e| NnlError::gpu(format!("Failed to signal fence: {}", e)))?;
@@ -1016,7 +1039,18 @@ mod tests {
 
             // Expected: [58, 64, 139, 154]
             let expected = vec![58.0, 64.0, 139.0, 154.0];
-            for (actual, expected) in result.iter().zip(expected.iter()) {
+            println!("Matrix A: {:?}", a);
+            println!("Matrix B: {:?}", b);
+            println!("GPU Result: {:?}", result);
+            println!("Expected: {:?}", expected);
+            for (i, (actual, expected)) in result.iter().zip(expected.iter()).enumerate() {
+                println!(
+                    "Index {}: GPU={}, Expected={}, Diff={}",
+                    i,
+                    actual,
+                    expected,
+                    (actual - expected).abs()
+                );
                 assert!((actual - expected).abs() < 1e-6);
             }
         }
