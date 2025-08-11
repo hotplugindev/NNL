@@ -4,11 +4,15 @@
 //! including CPU, and Vulkan compute shaders.
 
 use crate::error::Result;
+use std::cell::RefCell;
 use std::fmt;
 use std::sync::Arc;
 
+pub mod async_executor;
 pub mod cpu;
 pub mod gpu;
+pub mod kernel_fusion;
+pub mod memory_pool;
 
 /// Available device types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,6 +30,25 @@ impl fmt::Display for DeviceType {
             DeviceType::Vulkan => write!(f, "Vulkan"),
         }
     }
+}
+
+// Thread-local default device to prevent unwanted auto-selection
+thread_local! {
+    static DEFAULT_DEVICE: RefCell<Option<Device>> = RefCell::new(None);
+}
+
+/// Set the thread-local default device
+pub fn set_default_device(device: Device) {
+    DEFAULT_DEVICE.with(|d| {
+        *d.borrow_mut() = Some(device);
+    });
+}
+
+/// Clear the thread-local default device
+pub fn clear_default_device() {
+    DEFAULT_DEVICE.with(|d| {
+        *d.borrow_mut() = None;
+    });
 }
 
 /// Device information and capabilities
@@ -60,8 +83,19 @@ impl Device {
 
     /// Auto-select the best available device
     pub fn auto_select() -> Result<Self> {
-        // Try GPU backends first, then fall back to CPU
+        // Check for thread-local default device first
+        let default_device = DEFAULT_DEVICE.with(|d| d.borrow().clone());
+        if let Some(device) = default_device {
+            return Ok(device);
+        }
 
+        // Check if CPU-only mode is requested via environment variable
+        if std::env::var("NNL_CPU_ONLY").is_ok() {
+            log::info!("NNL_CPU_ONLY set, using CPU device");
+            return Self::cpu();
+        }
+
+        // Try GPU backends first, then fall back to CPU
         if let Ok(device) = Self::vulkan() {
             log::info!("Selected Vulkan device: {}", device.info.name);
             return Ok(device);
@@ -84,11 +118,22 @@ impl Device {
             supports_f16: false,
             supports_f64: true,
         };
-        Ok(Self::new(backend, info))
+        let device = Self::new(backend, info);
+
+        // Set this CPU device as the thread-local default
+        set_default_device(device.clone());
+        Ok(device)
     }
 
     /// Create a Vulkan device
     pub fn vulkan() -> Result<Self> {
+        // Check if CPU-only mode is requested
+        if std::env::var("NNL_CPU_ONLY").is_ok() {
+            return Err(crate::error::NnlError::device(
+                "Vulkan device creation blocked by NNL_CPU_ONLY environment variable",
+            ));
+        }
+
         let backend = Arc::new(gpu::VulkanBackend::new()?);
         let info = backend.device_info()?;
         Ok(Self::new(backend, info))

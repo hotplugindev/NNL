@@ -1,6 +1,6 @@
 [package]
 name = "nnl"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 authors = ["Giona Berti <hotplugin.dev@gmail.com>"]
 description = "A high-performance neural network library for Rust with CPU and GPU support"

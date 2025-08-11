@@ -4,9 +4,10 @@
 //! across CPU,  and Vulkan backends with automatic memory management
 //! and optimized operations.
 
-use crate::device::{Device, DeviceMemory, DeviceType};
+use crate::device::{Device, DeviceMemory};
 use crate::error::{NnlError, Result};
-use ndarray::{Array, ArrayD, Dimension, IxDyn};
+use crate::prelude::DeviceType;
+use ndarray::{Array, ArrayD, Dimension};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::{Add, Div, Mul, Sub};
