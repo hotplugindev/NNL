@@ -31,8 +31,12 @@ pub use training::{LearningRateSchedule, TrainingConfig, TrainingHistory, Traini
 pub struct Network {
     /// Network layers
     layers: Vec<Box<dyn Layer>>,
+    /// Layer configurations for serialization
+    layer_configs: Vec<crate::layers::LayerConfig>,
     /// Loss function
     loss_function: LossFunction,
+    /// Optimizer configuration for serialization
+    optimizer_config: crate::optimizers::OptimizerConfig,
     /// Optimizer
     optimizer: Box<dyn Optimizer>,
     /// Device for computation
@@ -123,10 +127,12 @@ impl TrainingCallback for ProgressCallback {
 }
 
 impl Network {
-    /// Create a new network
-    pub fn new(
+    /// Create a new network with full configuration (for serialization support)
+    pub fn new_with_configs(
         layers: Vec<Box<dyn Layer>>,
+        layer_configs: Vec<crate::layers::LayerConfig>,
         loss_function: LossFunction,
+        optimizer_config: crate::optimizers::OptimizerConfig,
         optimizer: Box<dyn Optimizer>,
         device: Device,
     ) -> Result<Self> {
@@ -150,12 +156,40 @@ impl Network {
 
         Ok(Self {
             layers,
+            layer_configs,
             loss_function,
+            optimizer_config,
             optimizer,
             device,
             training: true,
             metrics,
         })
+    }
+
+    /// Create a new network (backward compatible constructor)
+    pub fn new(
+        layers: Vec<Box<dyn Layer>>,
+        loss_function: LossFunction,
+        optimizer: Box<dyn Optimizer>,
+        device: Device,
+    ) -> Result<Self> {
+        // Create default layer configs - this won't be accurate but maintains compatibility
+        let layer_configs = vec![];
+        let optimizer_config = crate::optimizers::OptimizerConfig::SGD {
+            learning_rate: 0.01,
+            momentum: None,
+            weight_decay: None,
+            nesterov: false,
+        };
+
+        Self::new_with_configs(
+            layers,
+            layer_configs,
+            loss_function,
+            optimizer_config,
+            optimizer,
+            device,
+        )
     }
 
     /// Forward pass through the network
@@ -470,6 +504,78 @@ impl Network {
         self.metrics.total_parameters
     }
 
+    /// Get all network parameters for serialization
+    pub fn get_parameters(&self) -> Vec<crate::tensor::SerializableTensor> {
+        self.layers
+            .iter()
+            .flat_map(|layer| {
+                layer
+                    .parameters()
+                    .into_iter()
+                    .map(|p| crate::tensor::SerializableTensor::from(p))
+            })
+            .collect()
+    }
+
+    /// Set network parameters from serialized data
+    pub fn set_parameters(
+        &mut self,
+        serialized_params: Vec<crate::tensor::SerializableTensor>,
+    ) -> Result<()> {
+        let tensors: Result<Vec<_>> = serialized_params
+            .into_iter()
+            .map(|sp| crate::tensor::Tensor::try_from(sp))
+            .collect();
+
+        let tensors = tensors?;
+        self.update_parameters(tensors)
+    }
+
+    /// Get optimizer state for serialization
+    pub fn get_optimizer_state(
+        &self,
+    ) -> std::collections::HashMap<String, crate::tensor::SerializableTensor> {
+        self.optimizer
+            .state_dict()
+            .into_iter()
+            .map(|(k, v)| (k, crate::tensor::SerializableTensor::from(&v)))
+            .collect()
+    }
+
+    /// Set optimizer state from serialized data
+    pub fn set_optimizer_state(
+        &mut self,
+        serialized_state: std::collections::HashMap<String, crate::tensor::SerializableTensor>,
+    ) -> Result<()> {
+        let state: Result<std::collections::HashMap<String, crate::tensor::Tensor>> =
+            serialized_state
+                .into_iter()
+                .map(|(k, v)| Ok((k, crate::tensor::Tensor::try_from(v)?)))
+                .collect();
+
+        self.optimizer.load_state_dict(state?)
+    }
+
+    /// Get layer configurations
+    pub fn get_layer_configs(&self) -> &[crate::layers::LayerConfig] {
+        &self.layer_configs
+    }
+
+    /// Get optimizer configuration
+    pub fn get_optimizer_config(&self) -> &crate::optimizers::OptimizerConfig {
+        &self.optimizer_config
+    }
+
+    /// Get loss function
+    pub fn get_loss_function(&self) -> &LossFunction {
+        &self.loss_function
+    }
+
+    /// Get device
+    pub fn get_device(&self) -> &Device {
+        &self.device
+    }
+
     /// Get loss function
     pub fn loss_function(&self) -> &LossFunction {
         &self.loss_function
@@ -516,7 +622,7 @@ impl Network {
     }
 
     // Helper methods
-    fn collect_parameters(&self) -> Vec<Tensor> {
+    pub(crate) fn collect_parameters(&self) -> Vec<Tensor> {
         self.layers
             .iter()
             .flat_map(|layer| {
@@ -537,7 +643,7 @@ impl Network {
             .collect()
     }
 
-    fn update_parameters(&mut self, params: Vec<Tensor>) -> Result<()> {
+    pub(crate) fn update_parameters(&mut self, params: Vec<Tensor>) -> Result<()> {
         let mut param_idx = 0;
 
         // Collect device info to avoid borrowing conflicts
@@ -974,7 +1080,36 @@ mod tests {
         .unwrap();
         let device = Device::cpu().unwrap();
 
-        let network = Network::new(layers, loss, optimizer, device);
+        let layer_configs = vec![
+            LayerConfig::Dense {
+                input_size: 2,
+                output_size: 4,
+                activation: crate::activations::Activation::ReLU,
+                use_bias: true,
+                weight_init: crate::layers::WeightInit::Xavier,
+            },
+            LayerConfig::Dense {
+                input_size: 4,
+                output_size: 1,
+                activation: crate::activations::Activation::Sigmoid,
+                use_bias: true,
+                weight_init: crate::layers::WeightInit::Xavier,
+            },
+        ];
+        let optimizer_config = crate::optimizers::OptimizerConfig::SGD {
+            learning_rate: 0.01,
+            momentum: None,
+            weight_decay: None,
+            nesterov: false,
+        };
+        let network = Network::new_with_configs(
+            layers,
+            layer_configs,
+            loss,
+            optimizer_config,
+            optimizer,
+            device,
+        );
         assert!(network.is_ok());
 
         let network = network.unwrap();

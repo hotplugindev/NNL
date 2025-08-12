@@ -116,10 +116,17 @@ impl NetworkBuilder {
         NetworkBuilder::validate_layer_compatibility(&self.layers, &layers)?;
 
         // Create optimizer
-        let optimizer = create_optimizer(optimizer_config)?;
+        let optimizer = create_optimizer(optimizer_config.clone())?;
 
         // Build network
-        Network::new(layers, loss_function, optimizer, device)
+        Network::new_with_configs(
+            layers,
+            self.layers,
+            loss_function,
+            optimizer_config,
+            optimizer,
+            device,
+        )
     }
 
     /// Validate that layers are compatible with each other

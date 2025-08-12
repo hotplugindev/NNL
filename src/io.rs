@@ -265,41 +265,31 @@ fn serialize_model(
 }
 
 /// Extract parameters from network
-fn extract_parameters(_network: &Network) -> Result<Vec<SerializableTensor>> {
-    // This would need access to network internals
-    // For now, return empty vector as placeholder
-    Ok(Vec::new())
+fn extract_parameters(network: &Network) -> Result<Vec<SerializableTensor>> {
+    Ok(network.get_parameters())
 }
 
 /// Extract optimizer state from network
-fn extract_optimizer_state(_network: &Network) -> Result<HashMap<String, SerializableTensor>> {
-    // This would need access to optimizer internals
-    // For now, return empty map as placeholder
-    Ok(HashMap::new())
+fn extract_optimizer_state(network: &Network) -> Result<HashMap<String, SerializableTensor>> {
+    Ok(network.get_optimizer_state())
 }
 
 /// Convert SerializableModel back to Network
 fn deserialize_model(model: SerializableModel) -> Result<Network> {
     use crate::network::NetworkBuilder;
 
-    // For now, create a simple default network since we don't have
-    // complete layer serialization implemented
+    // Build network from architecture
     let mut builder = NetworkBuilder::new();
 
-    // If we have layers, try to add them
+    // Add layers from architecture
     if !model.architecture.layers.is_empty() {
         for layer_config in &model.architecture.layers {
             builder = builder.add_layer(layer_config.clone());
         }
     } else {
-        // Create a default simple network
-        builder = builder.add_layer(crate::layers::LayerConfig::Dense {
-            input_size: 2,
-            output_size: 1,
-            activation: crate::activations::Activation::Sigmoid,
-            use_bias: true,
-            weight_init: crate::layers::WeightInit::Xavier,
-        });
+        return Err(crate::error::NnlError::invalid_input(
+            "No layers found in saved model",
+        ));
     }
 
     // Set loss function and optimizer
@@ -308,31 +298,60 @@ fn deserialize_model(model: SerializableModel) -> Result<Network> {
         .optimizer(model.architecture.optimizer_config.clone());
 
     // Build the network
-    let network = builder.build()?;
+    let mut network = builder.build()?;
 
-    // TODO: Restore parameters from model.parameters
-    // This would require implementing parameter restoration
-    // For now, the network will have randomly initialized parameters
+    // Restore parameters if available
+    if !model.parameters.is_empty() {
+        network.set_parameters(model.parameters)?;
+    }
+
+    // Restore optimizer state if available
+    if !model.optimizer_state.is_empty() {
+        network.set_optimizer_state(model.optimizer_state)?;
+    }
 
     Ok(network)
 }
 
 /// Build architecture information from network
-fn build_architecture_info(_network: &Network) -> Result<ModelArchitecture> {
-    // For now, create a basic architecture placeholder
-    // Real implementation would extract from actual network
+fn build_architecture_info(network: &Network) -> Result<ModelArchitecture> {
+    let layers = network.get_layer_configs().to_vec();
+    let loss_function = network.get_loss_function().clone();
+    let optimizer_config = network.get_optimizer_config().clone();
+
+    // Determine input and output shapes from first and last layers
+    let input_shape = if let Some(first_layer) = layers.first() {
+        match first_layer {
+            crate::layers::LayerConfig::Dense { input_size, .. } => vec![*input_size],
+            crate::layers::LayerConfig::Conv2D { in_channels, .. } => vec![*in_channels],
+            _ => vec![],
+        }
+    } else {
+        vec![]
+    };
+
+    let output_shape = if let Some(last_layer) = layers.last() {
+        match last_layer {
+            crate::layers::LayerConfig::Dense { output_size, .. } => vec![*output_size],
+            crate::layers::LayerConfig::Conv2D { out_channels, .. } => vec![*out_channels],
+            _ => vec![],
+        }
+    } else {
+        vec![]
+    };
+
+    let device_type = match network.get_device().device_type() {
+        crate::device::DeviceType::Vulkan => "Vulkan".to_string(),
+        crate::device::DeviceType::Cpu => "CPU".to_string(),
+    };
+
     Ok(ModelArchitecture {
-        layers: Vec::new(), // Would extract from actual network layers
-        loss_function: crate::losses::LossFunction::MeanSquaredError, // Default
-        optimizer_config: crate::optimizers::OptimizerConfig::SGD {
-            learning_rate: 0.01,
-            momentum: None,
-            weight_decay: None,
-            nesterov: false,
-        },
-        input_shape: Vec::new(),        // Would determine from first layer
-        output_shape: Vec::new(),       // Would determine from last layer
-        device_type: "CPU".to_string(), // Default device
+        layers,
+        loss_function,
+        optimizer_config,
+        input_shape,
+        output_shape,
+        device_type,
     })
 }
 
